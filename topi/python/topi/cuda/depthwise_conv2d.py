@@ -18,13 +18,89 @@
 """Schedule for depthwise_conv2d with auto fusion"""
 import tvm
 from tvm import autotvm
-from ..util import traverse_inline
+from tvm.contrib import cudnn
+from ..util import get_const_tuple, traverse_inline
 from .. import tag
 from .. import generic, nn
 
 # register original implementation of depthwise_conv2d_nchw since we don't need to change this part
-autotvm.register_topi_compute(nn.depthwise_conv2d_nchw, ['cuda', 'gpu'], 'direct',
-                              nn.depthwise_conv2d_nchw.fdefault)
+autotvm.register_topi_compute(nn.depthwise_conv2d_nchw, ['cuda', 'gpu'], 'direct')
+                              # nn.depthwise_conv2d_nchw.fdefault)
+
+def depthwise_conv2d_cuda(cfg, data, kernel, strides, padding, dilation, layout='NCHW', out_dtype='float32', algo=-1):
+    """Depthwise Conv2D operator for cuda backend.
+
+    Parameters
+    ----------
+    cfg: ConfigEntity
+        The config for this template
+
+    data : tvm.Tensor
+        4-D with shape [batch, in_channel, in_height, in_width] or
+        5-D with shape [batch, ic_chunk, in_height, in_width, ic_block]
+
+    kernel : tvm.Tensor
+        4-D with shape [num_filter, in_channel, filter_height, filter_width] or
+        6-D with shape [num_filter_chunk, in_channel_chunk, filter_height,
+        filter_width, num_filter_block, in_channel_block]
+
+    strides : int or a list/tuple of two ints
+        stride size, or [stride_height, stride_width]
+
+    padding : int or a list/tuple of two ints
+        padding size, or [pad_height, pad_width]
+
+    dilation: int or a list/tuple of two ints
+        dilation size, or [dilation_height, dilation_width]
+
+    layout : str
+        layout of data
+
+    out_dtype: str
+        The output type. This is used for mixed precision.
+
+    Returns
+    -------
+    output : tvm.Tensor
+        4-D with shape [batch, out_channel, out_height, out_width]
+    """
+    target = tvm.target.current_target()
+
+    if "cudnn" in target.libs:
+        # group_count = in_channel for depthwise
+        if layout == 'NCHW':
+            tensor_format = 0 # CUDNN_TENSOR_NCHW
+            N, group_count, H, W = get_const_tuple(data.shape)
+        elif layout == 'NHWC':
+            tensor_format = 1 # CUDNN_TENSOR_NHWC
+            N, H, W, group_count = get_const_tuple(data.shape)
+        else:
+            raise ValueError("Unsupported layout %s in cudnn" % layout)
+        CO, CI, KH, KW = get_const_tuple(kernel.shape)
+
+        # handle dilation
+        stride_h, stride_w = (strides, strides) if isinstance(strides, int) else strides
+        pad_h, pad_w = (padding, padding) if isinstance(padding, int) else padding
+        dilation_h, dilation_w = (dilation, dilation) if isinstance(dilation, int) else dilation
+
+        # OH = (H + 2 * pad_h - KH) // stride_h + 1
+        # OW = (W + 2 * pad_w - KW) // stride_w + 1
+        # cfg.add_flop(2 * N * OH * OW * CO * CI * ((KH - 1) * dilation_h + 1) *\
+        #             ((KW - 1) * dilation_w + 1))
+
+        return cudnn.grouped_conv2d_forward(data,
+                                            kernel,
+                                            group_count,
+                                            stride_h,
+                                            stride_w,
+                                            pad_h,
+                                            pad_w,
+                                            dilation_h,
+                                            dilation_w,
+                                            conv_mode=1,
+                                            tensor_format=tensor_format,
+                                            algo=algo)  # let CUDNN choose the best algo
+
 
 @autotvm.register_topi_schedule(generic.schedule_depthwise_conv2d_nchw, ['cuda', 'gpu'], 'direct')
 def schedule_depthwise_conv2d_nchw_cuda(cfg, outs):
@@ -41,6 +117,10 @@ def schedule_depthwise_conv2d_nchw_cuda(cfg, outs):
     s: Schedule
         The computation schedule for depthwise_conv2d nchw.
     """
+    target = tvm.target.current_target()
+    if 'cudnn' in target.libs:
+        return generic.schedule_extern(outs)
+
     outs = [outs] if isinstance(outs, tvm.tensor.Tensor) else outs
     s = tvm.create_schedule([x.op for x in outs])
 
@@ -198,7 +278,8 @@ def schedule_depthwise_conv2d_nhwc(outs):
             if OP not in s.outputs:
                 s[OP].compute_inline()
             for tensor in OP.input_tensors:
-                if isinstance(tensor.op, tvm.tensor.ComputeOp) and tensor.op not in scheduled_ops:
+                # if isinstance(tensor.op, tvm.tensor.ComputeOp) and tensor.op not in scheduled_ops:
+                if tensor.op.input_tensors and tensor.op not in scheduled_ops:
                     traverse(tensor.op)
         # schedule depthwise_conv2d
         if OP.tag == 'depthwise_conv2d_nhwc':

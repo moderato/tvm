@@ -384,3 +384,257 @@ def conv2d_forward(x,
             ins[0],
             ins[1],
             outs[0]), name="y")
+
+def grouped_conv2d_w_shape(group_count,
+                   in_channel,
+                   out_channel,
+                   filter_h,
+                   filter_w):
+    """Get weight shape for a 2D grouped convolution
+
+    Parameters
+    ----------
+    group_count: int
+        group count
+    in_channel: int
+        input channel
+    out_channel: int
+        output channel
+    filter_h: int
+        filter height
+    filter_w: int
+        filter width
+
+    Returns
+    -------
+    wshape: list
+        weight shape
+    """
+    return [out_channel, int(in_channel / group_count), filter_h, filter_w]
+
+def grouped_conv2d_output_shape(tensor_format,
+                                group_count,
+                                pad_h,
+                                pad_w,
+                                stride_h,
+                                stride_w,
+                                dilation_h,
+                                dilation_w,
+                                x_shape,
+                                w_shape):
+    """Get output shape of 2D grouped, convolution
+
+    Paramters
+    ---------
+    tensor_format: int
+        0: CUDNN_TENSOR_NCHW
+        1: CUDNN_TENSOR_NHWC
+        2: CUDNN_TENSOR_NCHW_VECT_C
+    group_count: int
+        group count
+    pad_h: int
+        height pad
+    pad_w: int
+        weight pad
+    stride_h: int
+        height stride
+    stride_w: int
+        width stride
+    dilation_h: int
+        height dilation
+    dilation_w: int
+        width dilation
+    x_shape: list
+        input shape
+    w_shape: list
+        weight shape
+
+    Returns
+    -------
+    oshape: list
+        output shape
+    """
+    assert isinstance(x_shape, list)
+    assert isinstance(w_shape, list)
+    assert len(x_shape) == 4
+    assert len(w_shape) == 4
+    oshape = np.zeros((len(x_shape)), dtype=np.int32)
+    func = _get_global_func("tvm.contrib.cudnn.grouped_conv2d.output_shape")
+    func(tensor_format,
+         group_count,
+         pad_h,
+         pad_w,
+         stride_h,
+         stride_w,
+         dilation_h,
+         dilation_w,
+         x_shape[0].value,
+         x_shape[1].value,
+         x_shape[2].value,
+         x_shape[3].value,
+         w_shape[0].value,
+         w_shape[1].value,
+         w_shape[2].value,
+         w_shape[3].value,
+         _get_np_int32_array_handle(oshape))
+    return list(oshape)
+
+
+def grouped_conv2d_find_algo(tensor_format,
+                             group_count,
+                             pad_h,
+                             pad_w,
+                             stride_h,
+                             stride_w,
+                             dilation_h,
+                             dilation_w,
+                             x_shape,
+                             w_shape,
+                             y_shape):
+    """Choose the best algo for the given input.
+
+    Paramters
+    ---------
+    tensor_format: int
+        0: CUDNN_TENSOR_NCHW
+        1: CUDNN_TENSOR_NHWC
+        2: CUDNN_TENSOR_NCHW_VECT_C
+    group_count: int
+        group count
+    pad_h: int
+        height pad
+    pad_w: int
+        weight pad
+    stride_h: int
+        height stride
+    stride_w: int
+        width stride
+    dilation_h: int
+        height dilation
+    dilation_w: int
+        width dilation
+    x_shape: list
+        input shape
+    w_shape: list
+        weight shape
+    y_shape: list
+        output shape
+
+    Returns
+    -------
+    algo: int
+        algo chosen by CUDNN
+    """
+    func = _get_global_func("tvm.contrib.cudnn.grouped_conv2d.find_algo")
+    return func(tensor_format,
+                group_count,
+                pad_h,
+                pad_w,
+                stride_h,
+                stride_w,
+                dilation_h,
+                dilation_w,
+                x_shape[0].value,
+                x_shape[1].value,
+                x_shape[2].value,
+                x_shape[3].value,
+                w_shape[0].value,
+                w_shape[1].value,
+                w_shape[2].value,
+                w_shape[3].value,
+                int(y_shape[0]),
+                int(y_shape[1]),
+                int(y_shape[2]),
+                int(y_shape[3]))
+
+
+def grouped_conv2d_forward(x,
+                           w,
+                           group_count,
+                           stride_h=1,
+                           stride_w=1,
+                           pad_h=0,
+                           pad_w=0,
+                           dilation_h=1,
+                           dilation_w=1,
+                           conv_mode=1,
+                           tensor_format=0,
+                           algo=-1):
+    """Create an extern op that compute 2D convolution with CuDNN
+
+    Parameters
+    ----------
+    x: Tensor
+        input feature map
+    w: Tensor
+        convolution weight
+    group_count: int
+        group count
+    stride_h: int
+        height stride
+    stride_w: int
+        width stride
+    pad_h: int
+        height pad
+    pad_w: int
+        weight pad
+    dilation_h: int
+        height dilation
+    dilation_w: int
+        width dilation
+    conv_mode: int
+        0: CUDNN_CONVOLUTION
+        1: CUDNN_CROSS_CORRELATION
+    tensor_format: int
+        0: CUDNN_TENSOR_NCHW
+        1: CUDNN_TENSOR_NHWC
+        2: CUDNN_TENSOR_NCHW_VECT_C
+    algo: int
+        Forward algorithm, get index from ```algo_to_index``` function
+        if algo == -1, the best algo will be chosen by CUDNN
+
+    Returns
+    -------
+    y: Tensor
+        The result tensor
+    """
+    oshape = grouped_conv2d_output_shape(tensor_format,
+                                         group_count,
+                                         pad_h,
+                                         pad_w,
+                                         stride_h,
+                                         stride_w,
+                                         dilation_h,
+                                         dilation_w,
+                                         list(x.shape),
+                                         list(w.shape))
+    if algo == -1:
+        algo = grouped_conv2d_find_algo(tensor_format,
+                                        group_count,
+                                        pad_h,
+                                        pad_w,
+                                        stride_h,
+                                        stride_w,
+                                        dilation_h,
+                                        dilation_w,
+                                        list(x.shape),
+                                        list(w.shape),
+                                        oshape)
+
+    return _api.extern(
+        oshape, [x, w],
+        lambda ins, outs: _intrin.call_packed(
+            "tvm.contrib.cudnn.grouped_conv2d.forward",
+            conv_mode,
+            tensor_format,
+            algo,
+            group_count,
+            pad_h,
+            pad_w,
+            stride_h,
+            stride_w,
+            dilation_h,
+            dilation_w,
+            ins[0],
+            ins[1],
+            outs[0]), name="y")
