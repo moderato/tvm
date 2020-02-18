@@ -104,6 +104,7 @@ class RedisDatabase(Database):
     MAGIC_SPLIT = "$"
 
     def __init__(self, db_index=REDIS_PROD):
+        # pylint: disable=import-outside-toplevel
         import redis
 
         if db_index == RedisDatabase.REDIS_TEST:
@@ -156,7 +157,7 @@ class RedisDatabase(Database):
         Examples
         --------
         get records for a target
-        >>> db.filter(lambda inp, resulst: "cuda" in inp.target.keys)
+        >>> db.filter(lambda inp, results: "cuda" in inp.target.keys)
         get records with errors
         >>> db.filter(lambda inp, results: any(r.error_no != 0 for r in results))
         """

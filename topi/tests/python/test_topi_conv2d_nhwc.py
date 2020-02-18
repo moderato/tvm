@@ -29,7 +29,6 @@ def verify_conv2d_nhwc(batch, in_channel, in_size, num_filter, kernel, stride, p
 
     A = tvm.placeholder((batch, in_height, in_width, in_channel), name='A')
     W = tvm.placeholder((kernel, kernel, in_channel, num_filter), name='W')
-    B = topi.nn.conv2d_nhwc(A, W, stride, padding, dilation)
 
     a_shape = get_const_tuple(A.shape)
     w_shape = get_const_tuple(W.shape)
@@ -45,11 +44,13 @@ def verify_conv2d_nhwc(batch, in_channel, in_size, num_filter, kernel, stride, p
     a_np, w_np, b_np = get_ref_data()
 
     def check_device(device):
-        if not tvm.module.enabled(device):
+        if not tvm.runtime.enabled(device):
             print("Skip because %s is not enabled" % device)
             return
         print("Running on target: %s" % device)
         with tvm.target.create(device):
+            B = topi.nn.conv2d(A, W, (stride, stride), padding,
+                               (dilation, dilation), layout='NHWC', out_dtype=dtype)
             s = topi.generic.schedule_conv2d_nhwc([B])
         ctx = tvm.context(device, 0)
         a = tvm.nd.array(a_np, ctx)
@@ -59,7 +60,7 @@ def verify_conv2d_nhwc(batch, in_channel, in_size, num_filter, kernel, stride, p
         func(a, w, b)
         tvm.testing.assert_allclose(b.asnumpy(), b_np, rtol=1e-5)
 
-    for device in ['llvm']:
+    for device in ['llvm', 'cuda']:
         check_device(device)
 
 
@@ -71,8 +72,13 @@ def test_conv2d_nhwc():
     verify_conv2d_nhwc(1, 256, 32, 256, 3, 1, "VALID")
     verify_conv2d_nhwc(4, 128, 16, 128, 5, 2, "VALID")
     verify_conv2d_nhwc(4, 128, 16, 256, 5, 2, "VALID")
+    verify_conv2d_nhwc(1, 128, 16, 256, 3, 2, (0, 0, 1, 1))
+    verify_conv2d_nhwc(1, 128, 16, 256, 3, 2, (1, 1, 2, 2))
+    verify_conv2d_nhwc(1, 128, 16, 128, 5, 2, (3, 3, 2, 2))
+    verify_conv2d_nhwc(1, 128, 16, 256, 3, 2, (0, 1, 2, 3))
     # dilation = 2
     verify_conv2d_nhwc(1, 256, 32, 256, 3, 1, "SAME", dilation=2)
+    verify_conv2d_nhwc(1, 256, 32, 256, 3, 1, (1, 1, 2, 2), dilation=2)
 
 
 if __name__ == "__main__":

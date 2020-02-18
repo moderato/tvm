@@ -21,11 +21,18 @@ from numbers import Integral
 
 import tvm
 from tvm.api import layout, bijective_layout
-from . import tag
+from . import tag, cpp
 
 class InvalidShapeError(ValueError):
     """Invalid shape for a topi function. i.e. call winograd template for non-3x3 kernel)"""
-    pass
+
+def nchw_pack_layout(layout_info):
+    """Check whether the layout type is NCHWinic"""
+    return layout_info[:4] == 'NCHW' and 'c' in layout_info and 'n' in layout_info
+
+def nchw_xc_layout(layout_info):
+    """Check whether the layout type is NCHWxc"""
+    return layout_info[:4] == 'NCHW' and 'c' in layout_info and layout_info[4:-1].isnumeric()
 
 def traverse_inline(s, final_op, callback):
     """Traverse computation graph and do auto inline
@@ -92,9 +99,9 @@ def get_const_int(expr):
     """
     if isinstance(expr, Integral):
         return expr
-    if not isinstance(expr, (tvm.expr.IntImm, tvm.expr.UIntImm)):
+    if not isinstance(expr, tvm.expr.IntImm):
         expr = tvm.ir_pass.Simplify(expr)
-    if not isinstance(expr, (tvm.expr.IntImm, tvm.expr.UIntImm)):
+    if not isinstance(expr, tvm.expr.IntImm):
         raise ValueError("Expect value to be constant int")
     return int(expr.value)
 
@@ -136,9 +143,9 @@ def equal_const_int(expr, value):
     """
     if isinstance(expr, Integral):
         return expr == value
-    if not isinstance(expr, (tvm.expr.IntImm, tvm.expr.UIntImm)):
+    if not isinstance(expr, tvm.expr.IntImm):
         expr = tvm.ir_pass.Simplify(expr)
-    if not isinstance(expr, (tvm.expr.IntImm, tvm.expr.UIntImm)):
+    if not isinstance(expr, tvm.expr.IntImm):
         return False
     return expr.value == value
 
@@ -160,9 +167,9 @@ def get_const_tuple(in_tuple):
     for elem in in_tuple:
         if isinstance(elem, tvm.expr.Var):
             ret.append(elem)
-        elif not isinstance(elem, (tvm.expr.IntImm, tvm.expr.UIntImm, int)):
+        elif not isinstance(elem, (tvm.expr.IntImm, int)):
             elem = tvm.ir_pass.Simplify(elem)
-            if not isinstance(elem, (tvm.expr.IntImm, tvm.expr.UIntImm)):
+            if not isinstance(elem, tvm.expr.IntImm):
                 ret.append(elem)
         else:
             ret.append(get_const_int(elem))
@@ -198,7 +205,7 @@ def simplify(expr):
     out : Expr or int
         The simplified output
     """
-    return tvm.ir_pass.Simplify(expr) if isinstance(expr, tvm.expr.Expr) else expr
+    return tvm.ir_pass.Simplify(expr) if isinstance(expr, tvm.expr.PrimExpr) else expr
 
 
 def ravel_index(indices, shape):
@@ -342,7 +349,7 @@ def get_shape(src_shape, src_layout, dst_layout):
 
     layout_mapping = bijective_layout(src_layout, dst_layout)
     dst_indices = layout_mapping.forward_index(
-        tvm.convert([i for i in range(len(src_layout))]))
+        tvm.convert(list(range(len(src_layout)))))
 
     return get_const_tuple(tuple([src_shape[i.value] for i in dst_indices]))
 
@@ -417,3 +424,19 @@ def make_idx(b, e, s, z, i):
                           (b - i) // tvm.abs(s),
                           (i - b) // s)
     return tvm.if_then_else(tvm.expr.Or(bc, ec), 88, ss)
+
+
+def is_empty_shape(shape):
+    """Check whether an input shape has dimesion with size 0.
+
+    Parameter
+    ---------
+    shape : list of Expr
+      Input shape
+
+    Returns
+    -------
+    is_empty: bool
+      Whether input shape is empty or has dimesion with size 0.
+    """
+    return cpp.util.is_empty_shape(shape)

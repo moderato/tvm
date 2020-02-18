@@ -22,7 +22,7 @@ from .. import cpp
 
 def _default_schedule(outs, auto_inline):
     """Default schedule for llvm."""
-    target = tvm.target.current_target(allow_none=False)
+    target = tvm.target.Target.current(allow_none=False)
     outs = [outs] if isinstance(outs, tvm.tensor.Tensor) else outs
     if target.target_name not in ("llvm", "c"):
         raise RuntimeError("schedule not registered for '%s'" % target)
@@ -32,6 +32,42 @@ def _default_schedule(outs, auto_inline):
         tvm.schedule.AutoInlineInjective(s)
         s[x].fuse(s[x].op.axis)
     return s
+
+
+@tvm.target.generic_func
+def schedule_conv1d_ncw(outs):
+    """Schedule for conv1d_ncw
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of conv1d_ncw
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
+
+
+@tvm.target.generic_func
+def schedule_conv1d_nwc(outs):
+    """Schedule for conv1d_nwc
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of conv1d_nwc
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
 
 
 @tvm.target.generic_func
@@ -159,7 +195,7 @@ def schedule_conv2d_winograd_weight_transform(outs):
     sch: Schedule
         The computation schedule for the op.
     """
-    # Typically this is computed in nnvm PreCompute pass
+    # Typically this is computed in PreCompute pass
     # so we make a schedule here for cpu llvm
     s = tvm.create_schedule([x.op for x in outs])
     output = outs[0]
@@ -205,7 +241,7 @@ def schedule_conv2d_winograd_nnpack_weight_transform(outs):
     sch: Schedule
         The computation schedule for the op.
     """
-    # Typically this is computed in nnvm PreCompute pass
+    # Typically this is computed in PreCompute pass
     s = tvm.create_schedule([x.op for x in outs])
     return s
 
@@ -242,6 +278,22 @@ def schedule_conv3d_ncdhw(outs):
     """
     return _default_schedule(outs, False)
 
+@tvm.target.generic_func
+def schedule_conv3d_ndhwc(outs):
+    """Schedule for conv3d_ndhwc
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of conv3d_ndhwc
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
 
 @tvm.target.generic_func
 def schedule_conv2d_transpose_nchw(outs):
@@ -251,6 +303,24 @@ def schedule_conv2d_transpose_nchw(outs):
     ----------
     outs: Array of Tensor
         The computation graph description of conv2d_transpose_nchw
+        in the format of an array of tensors.
+
+    Returns
+    -------
+    s: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
+
+
+@tvm.target.generic_func
+def schedule_conv1d_transpose_ncw(outs):
+    """Schedule for conv1d_transpose_ncw
+
+    Parameters
+    ----------
+    outs: Array of Tensor
+        The computation graph description of conv2d_transpose_ncw
         in the format of an array of tensors.
 
     Returns
@@ -575,28 +645,10 @@ def schedule_lrn(outs):
     sch: Schedule
         The computation schedule for the op.
     """
-    target = tvm.target.current_target(allow_none=False)
+    target = tvm.target.Target.current(allow_none=False)
     cpp_target = cpp.TEST_create_target(target.target_name)
     return cpp.generic.default_schedule(cpp_target, outs, False)
 
-@tvm.target.generic_func
-def schedule_l2_normalize(outs):
-    """Schedule for l2 normalize
-
-    Parameters
-    ----------
-    outs: Array of Tensor
-          The computation graph description of l2 normalize
-          in the format of an array of tensors.
-
-    Returns
-    -------
-    sch: Schedule
-        The computation schedule for the op.
-    """
-    target = tvm.target.current_target(allow_none=False)
-    cpp_target = cpp.TEST_create_target(target.target_name)
-    return cpp.generic.default_schedule(cpp_target, outs, False)
 
 @tvm.target.generic_func
 def schedule_sparse_dense(outs):
@@ -634,6 +686,6 @@ def schedule_sparse_transpose(outs):
 
 @tvm.target.generic_func
 def schedule_batch_matmul(outs):
-    target = tvm.target.current_target(allow_none=False)
+    target = tvm.target.Target.current(allow_none=False)
     cpp_target = cpp.TEST_create_target(target.target_name)
     return cpp.generic.default_schedule(cpp_target, outs, False)

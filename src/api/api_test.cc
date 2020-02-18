@@ -6,9 +6,9 @@
  * to you under the Apache License, Version 2.0 (the
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
- * 
+ *
  *   http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing,
  * software distributed under the License is distributed on an
  * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
@@ -21,17 +21,18 @@
  *  Code mainly used for test purposes.
  * \file api_test.cc
  */
-#include <tvm/expr.h>
-#include <tvm/tensor.h>
-#include <tvm/attrs.h>
-#include <tvm/api_registry.h>
+#include <tvm/tir/expr.h>
+#include <tvm/te/tensor.h>
+#include <tvm/ir/attrs.h>
+#include <tvm/runtime/registry.h>
+#include <tvm/ir/env_func.h>
 
 namespace tvm {
 // Attrs used to python API
 struct TestAttrs : public AttrsNode<TestAttrs> {
   int axis;
   std::string name;
-  Array<Expr> padding;
+  Array<PrimExpr> padding;
   TypedEnvFunc<int(int)> func;
 
   TVM_DECLARE_ATTRS(TestAttrs, "attrs.TestAttrs") {
@@ -44,7 +45,7 @@ struct TestAttrs : public AttrsNode<TestAttrs> {
         .describe("name");
     TVM_ATTR_FIELD(padding)
         .describe("padding of input")
-        .set_default(Array<Expr>({0, 0}));
+        .set_default(Array<PrimExpr>({0, 0}));
     TVM_ATTR_FIELD(func)
         .describe("some random env function")
         .set_default(TypedEnvFunc<int(int)>(nullptr));
@@ -53,11 +54,11 @@ struct TestAttrs : public AttrsNode<TestAttrs> {
 
 TVM_REGISTER_NODE_TYPE(TestAttrs);
 
-TVM_REGISTER_API("_nop")
+TVM_REGISTER_GLOBAL("testing.nop")
 .set_body([](TVMArgs args,  TVMRetValue *ret) {
   });
 
-TVM_REGISTER_API("_test_wrap_callback")
+TVM_REGISTER_GLOBAL("testing.test_wrap_callback")
 .set_body([](TVMArgs args,  TVMRetValue *ret) {
     PackedFunc pf = args[0];
     *ret = runtime::TypedPackedFunc<void()>([pf](){
@@ -65,7 +66,7 @@ TVM_REGISTER_API("_test_wrap_callback")
       });
   });
 
-TVM_REGISTER_API("_test_raise_error_callback")
+TVM_REGISTER_GLOBAL("testing.test_raise_error_callback")
 .set_body([](TVMArgs args,  TVMRetValue *ret) {
     std::string msg = args[0];
     *ret = runtime::TypedPackedFunc<void()>([msg](){
@@ -73,7 +74,7 @@ TVM_REGISTER_API("_test_raise_error_callback")
       });
   });
 
-TVM_REGISTER_API("_test_check_eq_callback")
+TVM_REGISTER_GLOBAL("testing.test_check_eq_callback")
 .set_body([](TVMArgs args,  TVMRetValue *ret) {
     std::string msg = args[0];
     *ret = runtime::TypedPackedFunc<void(int x, int y)>([msg](int x, int y){
@@ -81,7 +82,7 @@ TVM_REGISTER_API("_test_check_eq_callback")
       });
   });
 
-TVM_REGISTER_API("_context_test")
+TVM_REGISTER_GLOBAL("testing.context_test")
 .set_body([](TVMArgs args,  TVMRetValue *ret) {
     DLContext ctx = args[0];
     int dtype = args[1];
@@ -102,11 +103,11 @@ void ErrorTest(int x, int y) {
   }
 }
 
-TVM_REGISTER_API("_ErrorTest")
-.set_body_typed<void(int, int)>(ErrorTest);
+TVM_REGISTER_GLOBAL("testing.ErrorTest")
+.set_body_typed(ErrorTest);
 
 // internal function used for debug and testing purposes
-TVM_REGISTER_API("_ndarray_use_count")
+TVM_REGISTER_GLOBAL("testing.ndarray_use_count")
 .set_body([](TVMArgs args,  TVMRetValue *ret) {
     runtime::NDArray nd = args[0];
     // substract the current one

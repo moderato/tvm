@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-# pylint: disable=invalid-name,unused-variable,unused-argument,no-member
+# pylint: disable=invalid-name,unused-variable,unused-argument,no-member, import-outside-toplevel
 """Conv2D int8 schedule on x86"""
 
 import re
@@ -25,8 +25,10 @@ from tvm.autotvm.task.topi_integration import deserialize_args
 from ..nn.conv2d import _get_workload as _get_conv2d_workload
 from .. import generic, tag
 from ..generic import conv2d as conv2d_generic
+from ..nn.util import get_pad_tuple
 from ..util import get_const_tuple
 from ..nn.conv2d import conv2d_NCHWc_int8
+from ..nn.depthwise_conv2d import _get_workload as _get_depthwise_conv2d_workload
 from .. import nn
 from . import conv2d_avx_1x1, conv2d_avx_common
 
@@ -35,15 +37,20 @@ def _get_default_config_int8(cfg, data, kernel, strides, padding, out_dtype, is_
     """
     Get default schedule config for the workload
     """
-    assert not is_depthwise, "Depthwise Int8 not supported"
-    wkl = _get_conv2d_workload(data, kernel, strides, padding, out_dtype, layout)
-    is_kernel_1x1 = wkl.hkernel == 1 and wkl.wkernel == 1
-    if is_kernel_1x1:
-        conv2d_generic.fallback_schedule_cpu_1x1_int8(
-            cfg, wkl, int32_lanes=16, num_int8_elements=4)
+    if is_depthwise:
+        # Fallback to FP32 default config until a VNNI schedule is defined.
+        wkl = _get_depthwise_conv2d_workload(data, kernel, strides, padding, out_dtype)
+        from .depthwise_conv2d import _fallback_schedule
+        _fallback_schedule(cfg, wkl)
     else:
-        conv2d_generic.fallback_schedule_cpu_common_int8(
-            cfg, wkl, int32_lanes=16, num_int8_elements=4)
+        wkl = _get_conv2d_workload(data, kernel, strides, padding, out_dtype, layout)
+        is_kernel_1x1 = wkl.hkernel == 1 and wkl.wkernel == 1
+        if is_kernel_1x1:
+            conv2d_generic.fallback_schedule_cpu_1x1_int8(
+                cfg, wkl, int32_lanes=16, num_int8_elements=4)
+        else:
+            conv2d_generic.fallback_schedule_cpu_common_int8(
+                cfg, wkl, int32_lanes=16, num_int8_elements=4)
 
 
 def _is_int8_hw_support(data_dtype, kernel_dtype):
@@ -57,13 +64,13 @@ def _is_int8_hw_support(data_dtype, kernel_dtype):
     is_dtype_support = data_dtype == 'uint8' and kernel_dtype == 'int8'
 
     # 2) Check LLVM support
-    llvm_version = tvm.codegen.llvm_version_major()
+    llvm_version = tvm.target.codegen.llvm_version_major()
     is_llvm_support = llvm_version >= 8
 
     # 3) Check target
-    mcpu = tvm.target.current_target().mcpu
+    mcpu = tvm.target.Target.current().mcpu
     is_target_support = False
-    if mcpu == 'skylake-avx512' or mcpu == 'cascadelake':
+    if mcpu in ('skylake-avx512', 'cascadelake'):
         is_target_support = True
 
     return is_dtype_support and is_llvm_support and is_target_support
@@ -82,7 +89,7 @@ def _create_tuning_space_int8(cfg, data, kernel, strides, padding, dilation, lay
         kh, kw, oc, _ = kshape
     elif pat.match(layout) is not None:
         n, ic_chunk, h, w, ic_bn = dshape
-        target = tvm.target.current_target(allow_none=False)
+        target = tvm.target.Target.current(allow_none=False)
         oc_chunk, k_ic, kh, kw, k_ic_f, oc_bn, k_ic_s = kshape
         ic = ic_chunk * ic_bn
         assert ic == k_ic * k_ic_f * k_ic_s
@@ -92,10 +99,10 @@ def _create_tuning_space_int8(cfg, data, kernel, strides, padding, dilation, lay
                          "schedule template.".format(layout))
 
     is_kernel_1x1 = kh == 1 and kw == 1
-    ph, pw = padding if isinstance(padding, (tuple, list)) else (padding, padding)
+    pt, pl, pb, pr = get_pad_tuple(padding, kernel)
     sh, sw = strides if isinstance(strides, (tuple, list)) else (strides, strides)
-    oh = (h - kh + 2 * ph) // sh + 1
-    ow = (w - kw + 2 * pw) // sw + 1
+    oh = (h - kh + pt + pb) // sh + 1
+    ow = (w - kw + pl + pr) // sw + 1
 
     # Create schedule config
     cfg.define_split('tile_ic', ic, num_outputs=2, filter=lambda y: y.size[-1] % 4 == 0)
@@ -198,7 +205,7 @@ def _schedule_conv2d_NCHWc_int8(cfg, outs):
                 data = data_pad.op.input_tensors[0]
 
             args = [s, cfg, data_vec, conv_out, outs[0]]
-            target = tvm.target.current_target(allow_none=False)
+            target = tvm.target.Target.current(allow_none=False)
             # int8 conv kernel is 7-dim
             _, _, kh, kw, _, _, _ = get_const_tuple(kernel.shape)
             if kh == 1 and kw == 1:

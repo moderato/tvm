@@ -23,7 +23,7 @@ from tvm.relay.testing.temp_op_attr import TempOpAttr
 
 def run_opt_pass(expr, passes):
     passes = passes if isinstance(passes, list) else [passes]
-    mod = relay.Module.from_expr(expr)
+    mod = tvm.IRModule.from_expr(expr)
     seq = transform.Sequential(passes)
     with transform.PassContext(opt_level=3):
         mod = seq(mod)
@@ -318,6 +318,70 @@ def test_alter_layout_broadcast_op():
 
     assert analysis.alpha_equal(a, b), "Actual = \n" + str(a)
 
+
+def test_alter_layout_broadcast_scalar_op():
+    """Test alternating the layout of a conv2d.
+    The layout of broadcast operators and the weight should be changed accordingly.
+    """
+    def before():
+        x = relay.var("x", shape=(1, 500, 500, 64))
+        kernel = relay.var('kernel', shape=(3, 3, 64, 64), dtype='float32')
+        bias = relay.var("bias", shape=(64,))
+        multiplier1 = relay.var('multiplier1', shape=(1, ), dtype='float32')
+        multiplier2 = relay.var('multiplier2', shape=(1, 1), dtype='float32')
+
+        y = relay.nn.conv2d(x, kernel,
+                            data_layout='NHWC',
+                            kernel_layout="HWIO",
+                            kernel_size=(3, 3))
+        y = relay.add(bias, y)
+        y = relay.nn.relu(y)
+
+        y = relay.multiply(multiplier1, y)
+        y = relay.multiply(y, multiplier2)
+        y = relay.Function(analysis.free_vars(y), y)
+        return y
+
+    def alter_conv2d(attrs, inputs, tinfos):
+        data, weight = inputs
+        new_attrs = dict(attrs)
+        new_attrs['data_layout'] = 'NCHW16c'
+        return relay.nn.conv2d(data, weight, **new_attrs)
+
+    def expected():
+        x = relay.var("x", shape=(1, 500, 500, 64))
+        kernel = relay.var('kernel', shape=(3, 3, 64, 64), dtype='float32')
+        bias = relay.var("bias", shape=(64,))
+        multiplier1 = relay.var('multiplier1', shape=(1, ), dtype='float32')
+        multiplier2 = relay.var('multiplier2', shape=(1, 1), dtype='float32')
+
+        b = relay.expand_dims(bias, axis=0, num_newaxis=3)
+        b = relay.layout_transform(b, "NHWC", "NCHW16c")
+
+        y = relay.layout_transform(x, "NHWC", "NCHW16c")
+        y = relay.nn.conv2d(y, kernel,
+                            data_layout='NCHW16c',
+                            kernel_layout="HWIO",
+                            kernel_size=(3, 3))
+
+        y = relay.add(b, y)
+        y = relay.nn.relu(y)
+
+        y = relay.multiply(multiplier1, y)
+        y = relay.multiply(y, multiplier2)
+        y = relay.layout_transform(y, "NCHW16c", "NHWC")
+        y = relay.Function(analysis.free_vars(y), y)
+        return y
+
+    with TempOpAttr("nn.conv2d", "FTVMAlterOpLayout", alter_conv2d):
+        a = before()
+        a = run_opt_pass(a, [transform.CanonicalizeOps(),
+                             transform.AlterOpLayout()])
+        b = run_opt_pass(expected(), transform.InferType())
+
+    assert analysis.alpha_equal(a, b), "Actual = \n" + str(a)
+
+
 def test_alter_layout_scalar():
     """Test alternating the layout of a conv2d.
     The layout of broadcast operators and the weight should be changed accordingly.
@@ -553,7 +617,7 @@ def test_alter_layout_depthwise_conv2d():
         w = relay.var("w", shape=(32, 1, 3, 3))
         x = relay.layout_transform(x, "NCHW", "NCHW8c")
         w = relay.layout_transform(w, "OIHW", "OIHW1i8o")
-        y = relay.nn.contrib_depthwise_conv2d_nchwc(x, w, padding=(1, 1), channels=32, kernel_size=(3, 3),
+        y = relay.nn.contrib_depthwise_conv2d_nchwc(x, w, padding=(1, 1, 1, 1), channels=32, kernel_size=(3, 3),
                                                     groups=32, data_layout="NCHW8c", kernel_layout="OIHW1i8o",
                                                     out_layout="NCHW8c")
         y = relay.layout_transform(y, "NCHW8c", "NCHW")
@@ -931,6 +995,47 @@ def test_alter_layout_nhwc_nchw_arm():
 
     assert analysis.alpha_equal(a, b), "Actual = \n" + str(a)
 
+def test_alter_op_with_global_var():
+    """Test directly replacing an operator with a new one"""
+    def before():
+        x = relay.var("x", shape=(1, 64, 56, 56))
+        weight = relay.var('weight', shape=(64, 64, 3, 3))
+        y = relay.nn.conv2d(x, weight,
+                            channels=64,
+                            kernel_size=(3, 3),
+                            padding=(1, 1))
+        y = relay.nn.relu(y)
+        mod = tvm.IRModule()
+        foo = relay.GlobalVar('foo')
+        mod[foo] = relay.Function([x, weight], y)
+        mod["main"] = relay.Function([x, weight], foo(x, weight))
+        return mod
+
+    def alter_conv2d(attrs, inputs, tinfos):
+        data, weight = inputs
+        weight = relay.multiply(weight, relay.const(2.0, "float32"))
+        return relay.nn.conv2d(data, weight, **attrs)
+
+    def expected():
+        x = relay.var("x", shape=(1, 64, 56, 56))
+        weight = relay.var('weight', shape=(64, 64, 3, 3))
+        y = relay.nn.conv2d(x, relay.multiply(weight, relay.const(2.0, "float32")),
+                            channels=64,
+                            kernel_size=(3, 3),
+                            padding=(1, 1))
+        y = relay.nn.relu(y)
+        mod = tvm.IRModule()
+        foo = relay.GlobalVar('foo')
+        mod[foo] = relay.Function([x, weight], y)
+        mod["main"] = relay.Function([x, weight], foo(x, weight))
+        return mod
+
+    with TempOpAttr("nn.conv2d", "FTVMAlterOpLayout", alter_conv2d):
+        a = before()
+        a = transform.AlterOpLayout()(a)
+        b = transform.InferType()(expected())
+
+    assert analysis.alpha_equal(a, b), "Actual = \n" + str(a)
 
 if __name__ == "__main__":
     test_alter_op()
@@ -939,6 +1044,7 @@ if __name__ == "__main__":
     test_alter_layout_dual_path()
     test_alter_layout_resnet()
     test_alter_layout_broadcast_op()
+    test_alter_layout_broadcast_scalar_op()
     test_alter_layout_scalar()
     test_alter_layout_concatenate()
     test_alter_layout_nchw_upsamping_op()
@@ -949,3 +1055,4 @@ if __name__ == "__main__":
     test_alter_layout_pool()
     test_alter_layout_sum()
     test_alter_layout_nhwc_nchw_arm()
+    test_alter_op_with_global_var()

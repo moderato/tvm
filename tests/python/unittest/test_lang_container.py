@@ -15,6 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 import tvm
+import numpy as np
 
 def test_array():
     a = tvm.convert([1,2,3])
@@ -25,8 +26,8 @@ def test_array():
 
 def test_array_save_load_json():
     a = tvm.convert([1,2,3])
-    json_str = tvm.save_json(a)
-    a_loaded = tvm.load_json(json_str)
+    json_str = tvm.ir.save_json(a)
+    a_loaded = tvm.ir.load_json(json_str)
     assert(a_loaded[1].value == 2)
 
 
@@ -58,8 +59,8 @@ def test_map_save_load_json():
     b = tvm.var('b')
     amap = tvm.convert({a: 2,
                         b: 3})
-    json_str = tvm.save_json(amap)
-    amap = tvm.load_json(json_str)
+    json_str = tvm.ir.save_json(amap)
+    amap = tvm.ir.load_json(json_str)
     assert len(amap) == 2
     dd = {kv[0].name : kv[1].value for kv in amap.items()}
     assert(dd == {"a": 2, "b": 3})
@@ -68,8 +69,16 @@ def test_map_save_load_json():
 def test_in_container():
     arr = tvm.convert(['a', 'b', 'c'])
     assert 'a' in arr
-    assert tvm.make.StringImm('a') in arr
+    assert tvm.tir.StringImm('a') in arr
     assert 'd' not in arr
+
+def test_ndarray_container():
+    x = tvm.nd.array([1,2,3])
+    arr = tvm.convert([x, x])
+    assert arr[0].same_as(x)
+    assert arr[1].same_as(x)
+    assert isinstance(arr[0], tvm.nd.NDArray)
+
 
 if __name__ == "__main__":
     test_str_map()
@@ -78,3 +87,4 @@ if __name__ == "__main__":
     test_array_save_load_json()
     test_map_save_load_json()
     test_in_container()
+    test_ndarray_container()

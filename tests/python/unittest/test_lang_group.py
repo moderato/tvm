@@ -18,8 +18,8 @@
 import tvm
 
 def test_scan_group():
-    m = tvm.var("m")
-    n = tvm.var("n")
+    m = tvm.size_var("m")
+    n = tvm.size_var("n")
     x = tvm.compute((m, n), lambda i, j: tvm.const(1, "float32"), name="x")
     s_state = tvm.placeholder((m, n))
     s_init = tvm.compute((1, n), lambda _, i: x[0, i])
@@ -46,12 +46,12 @@ def test_scan_group():
         # compute outside group error.
         s[s_update2].compute_at(s[s_init], s_init.op.axis[0])
         assert False
-    except tvm.TVMError:
+    except tvm.error.TVMError:
         pass
 
 def test_compute_group():
-    m = tvm.var("m")
-    n = tvm.var("n")
+    m = tvm.size_var("m")
+    n = tvm.size_var("n")
     x = tvm.compute((m, n), lambda i, j: tvm.const(1, "float32"), name="x")
     x1 = tvm.compute(x.shape, lambda *i: x(*i) + 1, name="x1")
     x2 = tvm.compute(x.shape, lambda *i: x1(*i) + 2, name="x2")
@@ -64,8 +64,8 @@ def test_compute_group():
     assert g.num_child_stages == 2
 
 def test_nest_group():
-    m = tvm.var("m")
-    n = tvm.var("n")
+    m = tvm.size_var("m")
+    n = tvm.size_var("n")
     x = tvm.compute((m, n), lambda i, j: tvm.const(1, "float32"), name="x")
     x1 = tvm.compute(x.shape, lambda *i: x(*i) + 1, name="x1")
     x2 = tvm.compute(x.shape, lambda *i: x1(*i) + 2, name="x2")

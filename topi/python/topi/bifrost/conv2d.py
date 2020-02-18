@@ -74,8 +74,7 @@ def conv2d_bifrost(cfg, data, kernel, strides, padding, dilation, layout, out_dt
     if layout == 'NCHW':
         return conv2d_spatial_pack_nchw(cfg, data, kernel, strides, padding,
                                         dilation, out_dtype, num_tile=3)
-    else:
-        raise ValueError("Unsupported layout {}".format(layout))
+    raise ValueError("Unsupported layout {}".format(layout))
 
 
 @autotvm.register_topi_schedule(schedule_conv2d_nchw, 'bifrost', ['direct', 'winograd'])
@@ -157,7 +156,7 @@ def _schedule_spatial_pack(cfg, s, output, conv, data_vec, kernel_vec):
             # this part to make tuning records correct
             s[kernel_vec].pragma(s[kernel_vec].op.axis[0], 'debug_skip_region')
         else:
-            max_threads = tvm.target.current_target(allow_none=False).max_num_threads
+            max_threads = tvm.target.Target.current(allow_none=False).max_num_threads
             co, ci, kh, kw, vc = s[kernel_vec].op.axis
             fused = s[kernel_vec].fuse(co, ci, kh, kw, vc)
             fused, vec = s[kernel_vec].split(fused, VC)
@@ -276,11 +275,11 @@ def _decl_winograd(cfg, data, kernel, strides, padding, dilation, layout, out_dt
         H_CAT, W_CAT, CO, CI = get_const_tuple(kernel.shape)
         KH, KW = H_CAT - tile_size + 1, W_CAT - tile_size + 1
     HSTR, WSTR = strides if isinstance(strides, (tuple, list)) else (strides, strides)
-    HPAD, WPAD, _, _ = get_pad_tuple(padding, kernel)
+    pt, pl, pb, pr = get_pad_tuple(padding, (KH, KW))
 
     assert layout == 'NCHW'
     assert KH == 3 and KW == 3 and HSTR == 1 and WSTR == 1
-    data_pad = pad(data, (0, 0, HPAD, WPAD), name="data_pad")
+    data_pad = pad(data, (0, 0, pt, pl), (0, 0, pb, pr), name="data_pad")
 
     r = KW
     m = tile_size
@@ -289,8 +288,8 @@ def _decl_winograd(cfg, data, kernel, strides, padding, dilation, layout, out_dt
 
     K = CO
     C = CI
-    H = (IH + 2 * HPAD - 3) // HSTR + 1
-    W = (IW + 2 * WPAD - 3) // WSTR + 1
+    H = (IH + pt + pb - 3) // HSTR + 1
+    W = (IW + pl + pr - 3) // WSTR + 1
     nH, nW = (H + m-1) // m, (W + m-1) // m
     P = N * nH * nW
 

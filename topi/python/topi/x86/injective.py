@@ -19,6 +19,7 @@
 from __future__ import absolute_import as _abs
 import tvm
 from .. import generic
+from ..util import is_empty_shape
 
 @generic.schedule_injective_from_existing.register(["cpu"])
 def schedule_injective_from_existing(sch, out):
@@ -44,6 +45,12 @@ def schedule_injective_from_existing(sch, out):
         sch[out].parallel(fused)
     elif len(sch[out].op.axis) >= 1:
         sch[out].parallel(sch[out].op.axis[0])
+
+    # Vectorize the inner most for loop. Tiling first to get a const extent
+    if len(sch[out].op.axis) >= 1:
+        l = sch[out].op.axis[-1]
+        _, li = sch[out].split(l, factor=16)
+        sch[out].vectorize(li)
     return sch
 
 @generic.schedule_injective.register(["cpu"])
@@ -65,7 +72,9 @@ def schedule_injective(outs):
     x = outs[0]
     s = tvm.create_schedule([x.op for x in outs])
     tvm.schedule.AutoInlineInjective(s)
-    schedule_injective_from_existing(s, x)
+
+    if not is_empty_shape(x.shape):
+        schedule_injective_from_existing(s, x)
     return s
 
 @generic.schedule_concatenate.register(["cpu"])

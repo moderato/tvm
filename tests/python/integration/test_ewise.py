@@ -33,7 +33,7 @@ def test_exp():
 
     # one line to build the function.
     def check_device(device, host="stackvm"):
-        if not tvm.module.enabled(host):
+        if not tvm.runtime.enabled(host):
             return
         ctx = tvm.context(device, 0)
         if not ctx.exist:
@@ -57,7 +57,7 @@ def test_exp():
 def test_fmod():
     # graph
     def run(dtype):
-        n = tvm.var('n')
+        n = tvm.size_var('n')
         A = tvm.placeholder((n,), name='A', dtype=dtype)
         B = tvm.placeholder((n,), name='B', dtype=dtype)
         C = tvm.compute(A.shape, lambda *i: tvm.fmod(A(*i), B(*i)), name='C')
@@ -115,7 +115,7 @@ def test_multiple_cache_write():
     s[C].bind(tx, tvm.thread_axis("threadIdx.x"))
     # one line to build the function.
     def check_device(device, host="stackvm"):
-        if not tvm.module.enabled(host):
+        if not tvm.runtime.enabled(host):
             return
         ctx = tvm.context(device, 0)
         if not ctx.exist:
@@ -140,14 +140,14 @@ def test_multiple_cache_write():
 
 def test_log_pow_llvm():
     # graph
-    n = tvm.var('n')
+    n = tvm.size_var('n')
     A = tvm.placeholder((n,), name='A')
     B = tvm.compute(A.shape, lambda *i: tvm.power(tvm.log(A(*i)), 2.0), name='B')
     s = tvm.create_schedule(B.op)
     # create iter var and assign them tags.
     bx, tx = s[B].split(B.op.axis[0], factor=32)
     # one line to build the function.
-    if not tvm.module.enabled("llvm"):
+    if not tvm.runtime.enabled("llvm"):
         return
 
     flog = tvm.build(s, [A, B],
@@ -207,7 +207,7 @@ def test_popcount():
 def test_add():
     def run(dtype):
         # graph
-        n = tvm.var('n')
+        n = tvm.size_var('n')
         A = tvm.placeholder((n,), name='A', dtype=dtype)
         B = tvm.placeholder((n,), name='B', dtype=dtype)
         bias = tvm.var("bias", dtype=dtype)

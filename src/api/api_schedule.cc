@@ -21,24 +21,25 @@
  *  Implementation of API functions related to schedule pass.
  * \file api_schedule.cc
  */
-#include <tvm/expr.h>
-#include <tvm/tensor.h>
-#include <tvm/schedule.h>
-#include <tvm/schedule_pass.h>
-#include <tvm/api_registry.h>
-#include "../schedule/graph.h"
+#include <tvm/tir/expr.h>
+#include <tvm/te/tensor.h>
+#include <tvm/te/schedule.h>
+#include <tvm/te/schedule_pass.h>
+#include <tvm/runtime/registry.h>
+
+#include "../te/schedule/graph.h"
 
 namespace tvm {
-namespace schedule {
+namespace te {
 
-TVM_REGISTER_API("schedule.AutoInlineElemWise")
+TVM_REGISTER_GLOBAL("schedule.AutoInlineElemWise")
 .set_body_typed(AutoInlineElemWise);
 
 
-TVM_REGISTER_API("schedule.AutoInlineInjective")
+TVM_REGISTER_GLOBAL("schedule.AutoInlineInjective")
 .set_body_typed(AutoInlineInjective);
 
-TVM_REGISTER_API("schedule.ScheduleOps")
+TVM_REGISTER_GLOBAL("schedule.ScheduleOps")
 .set_body([](TVMArgs args, TVMRetValue* ret) {
   if (args.size() == 2)
     *ret = ScheduleOps(args[0], args[1], false);
@@ -46,9 +47,9 @@ TVM_REGISTER_API("schedule.ScheduleOps")
     *ret = ScheduleOps(args[0], args[1], args[2]);
 });
 
-#define REGISTER_SCHEDULE_PASS(PassName)                          \
-  TVM_REGISTER_API("schedule."#PassName)                          \
-  .set_body_typed(PassName);                                     \
+#define REGISTER_SCHEDULE_PASS(PassName)                             \
+  TVM_REGISTER_GLOBAL("schedule."#PassName)                          \
+  .set_body_typed(PassName);                                         \
 
 
 REGISTER_SCHEDULE_PASS(InferBound);
@@ -58,5 +59,5 @@ REGISTER_SCHEDULE_PASS(CreateAttachPath);
 REGISTER_SCHEDULE_PASS(ScanGetBody);
 REGISTER_SCHEDULE_PASS(ScanFixPointAnalysis);
 
-}  // namespace schedule
+}  // namespace te
 }  // namespace tvm

@@ -20,17 +20,7 @@ Developer API
 This page contains modules that are used by developers of TVM.
 Many of these APIs are PackedFunc registered in C++ backend.
 
-tvm.node
-~~~~~~~~
-.. automodule:: tvm.node
 
-.. autoclass:: tvm.node.NodeBase
-    :members:
-
-.. autoclass:: tvm.node.Node
-    :members:
-
-.. autofunction:: tvm.register_node
 
 tvm.expr
 ~~~~~~~~

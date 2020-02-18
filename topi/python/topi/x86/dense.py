@@ -28,7 +28,7 @@ from ..util import traverse_inline, get_const_tuple
 
 @autotvm.register_topi_compute(nn.dense, "cpu", "direct")
 def _declaration_dense(cfg, data, weight, bias=None, out_dtype=None):
-    target = tvm.target.current_target()
+    target = tvm.target.Target.current()
     if "cblas" in target.libs:
         C = cblas.matmul(data, weight, False, True)
         if bias is not None:
@@ -59,8 +59,8 @@ def _declaration_dense_pack(cfg, data, weight, bias=None, out_dtype=None):
     M, K = get_const_tuple(data.shape) # batch, in_dim
     N, _ = get_const_tuple(weight.shape) # out_dim
     # create tuning space
-    cfg.define_split("tile_y", 32 if isinstance(M, tvm.expr.Var) else M, num_outputs=2)
-    cfg.define_split("tile_x", 32 if isinstance(N, tvm.expr.Var) else N, num_outputs=2)
+    cfg.define_split("tile_y", 32 if isinstance(M, tvm.expr.Var) else M, num_outputs=3)
+    cfg.define_split("tile_x", 32 if isinstance(N, tvm.expr.Var) else N, num_outputs=3)
     cfg.define_split("tile_k", 32 if isinstance(K, tvm.expr.Var) else K, num_outputs=2)
     if cfg.is_fallback:
         _default_dense_pack_config(cfg, M, N, K)
@@ -119,7 +119,7 @@ def _declaration_dense_nopack(cfg, data, weight, bias=None, out_dtype=None):
 
 @autotvm.register_topi_schedule(generic.schedule_dense, "cpu", "direct")
 def _schedule_dense(cfg, outs):
-    target = tvm.target.current_target()
+    target = tvm.target.Target.current()
     if "cblas" in target.libs:
         return generic.schedule_extern(outs)
 
@@ -136,7 +136,7 @@ def _schedule_dense(cfg, outs):
 
 @autotvm.register_topi_schedule(generic.schedule_dense, "cpu", "direct_pack")
 def _schedule_dense_pack(cfg, outs):
-    target = tvm.target.current_target()
+    target = tvm.target.Target.current()
     if "cblas" in target.libs:
         return generic.schedule_extern(outs)
 
@@ -151,7 +151,7 @@ def _schedule_dense_pack(cfg, outs):
 
 @autotvm.register_topi_schedule(generic.schedule_dense, "cpu", "direct_nopack")
 def _schedule_dense_nopack(cfg, outs):
-    target = tvm.target.current_target()
+    target = tvm.target.Target.current()
     if "cblas" in target.libs:
         return generic.schedule_extern(outs)
 
@@ -191,7 +191,6 @@ def _schedule_dense_pack_template(cfg, s, C):
     z, y, x = s[packedB].op.axis
     s[packedB].reorder(z, x, y)
     s[packedB].parallel(z)
-    s[packedB].vectorize(y)
     return s
 
 

@@ -17,8 +17,8 @@
 import tvm
 
 def test_storage_sync():
-    m = tvm.var('m')
-    l = tvm.var('l')
+    m = tvm.size_var('m')
+    l = tvm.size_var('l')
     A = tvm.placeholder((m, l), name='A')
 
     A1 = tvm.compute((m, l), lambda i, j: A[i, j], name='A1')
@@ -40,21 +40,21 @@ def test_storage_sync():
     flist = tvm.ir_pass.SplitHostDevice(f)
     f = flist[1]
     f = tvm.ir_pass.ThreadSync(f, "shared")
-    body_list = tvm.make.stmt_list(f.body.body.body.body)
+    body_list = tvm.tir.stmt_list(f.body.body.body.body)
     assert(body_list[1].value.name == "tvm_storage_sync")
 
 
 def test_coproc_sync():
     @tvm.register_func("tvm.info.mem.global.cache")
     def meminfo_cache():
-        return tvm.make.node(
+        return tvm.ir.make_node(
             "MemoryInfo",
             unit_bits=8,
             max_simd_bits=32,
             max_num_bits=128,
             head_address=tvm.call_extern("handle", "global_cache"))
     ib = tvm.ir_builder.create()
-    n = tvm.var("n")
+    n = tvm.size_var("n")
     cp = tvm.thread_axis((0, 1), "cop")
     A = ib.allocate("float32", 128, name="A", scope="global.cache")
     with ib.for_range(0, n, name="i") as i:
@@ -66,7 +66,7 @@ def test_coproc_sync():
     stmt = ib.get()
     stmt = tvm.ir_pass.CoProcSync(stmt)
     body = stmt.body.body.body
-    blist = tvm.make.stmt_list(body)
+    blist = tvm.tir.stmt_list(body)
     assert(blist[1].value.name == "cop.coproc_read_barrier")
     assert(blist[1].value.args[3].value == 80)
     assert(blist[-2].value.name == "cop.coproc_sync")
@@ -76,7 +76,7 @@ def test_coproc_sync():
 
 def test_coproc_sync2():
     ib = tvm.ir_builder.create()
-    n = tvm.var("n")
+    n = tvm.size_var("n")
     cp = tvm.thread_axis((0, 1), "cop")
     ty = tvm.thread_axis("cthread")
     A = ib.allocate("float32", 128, name="A")
@@ -102,7 +102,7 @@ def test_coproc_sync3():
         return True
 
     ib = tvm.ir_builder.create()
-    n = tvm.var("n")
+    n = tvm.size_var("n")
     cp = tvm.thread_axis((0, 1), "cop")
     A = ib.allocate("float32", 128, name="A", scope="global.cache")
     with ib.for_range(0, n, name="i") as i:
@@ -119,10 +119,10 @@ def test_coproc_sync3():
 
     stmt = ib.get()
     stmt = tvm.ir_pass.CoProcSync(stmt)
-    slist = tvm.make.stmt_list(stmt.first.body.body)
+    slist = tvm.tir.stmt_list(stmt[0].body.body)
     push_st = slist[2]
-    slist = tvm.make.stmt_list(slist[-1])
-    pop_st = slist[0].body.first
+    slist = tvm.tir.stmt_list(slist[-1])
+    pop_st = slist[0].body[0]
 
     assert(push_st.value.name == "cop.coproc_dep_push")
     assert(__check_list(push_st.value.args, [2,3]))

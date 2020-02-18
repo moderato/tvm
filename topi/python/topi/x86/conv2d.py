@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-# pylint: disable=invalid-name,unused-variable,unused-argument,no-member
+# pylint: disable=invalid-name,unused-variable,unused-argument,no-member,import-outside-toplevel
 """Conv2D schedule on x86"""
 
 import logging
@@ -30,6 +30,7 @@ from ..nn.conv2d import conv2d, conv2d_NCHWc, \
     conv2d_infer_layout, _get_workload as _get_conv2d_workload
 from ..nn.depthwise_conv2d import _get_workload as _get_depthwise_conv2d_workload
 from ..nn.pad import pad
+from ..nn.util import get_pad_tuple
 from ..util import get_const_tuple
 
 from . import conv2d_avx_1x1, conv2d_avx_common
@@ -73,7 +74,7 @@ def _create_tuning_space(cfg, data, kernel, strides, padding, dilation, layout):
         kh, kw, oc, _ = kshape
     elif pat.match(layout) is not None:
         n, ic_chunk, h, w, ic_bn = dshape
-        target = tvm.target.current_target(allow_none=False)
+        target = tvm.target.Target.current(allow_none=False)
         oc_chunk, k_ic_chunk, kh, kw, k_ic_bn, oc_bn = kshape
         assert ic_chunk == k_ic_chunk
         assert ic_bn == k_ic_bn
@@ -84,10 +85,10 @@ def _create_tuning_space(cfg, data, kernel, strides, padding, dilation, layout):
                          "schedule template.".format(layout))
 
     is_kernel_1x1 = kh == 1 and kw == 1
-    ph, pw = padding if isinstance(padding, (tuple, list)) else (padding, padding)
+    pt, pl, pb, pr = get_pad_tuple(padding, (kh, kw))
     sh, sw = strides if isinstance(strides, (tuple, list)) else (strides, strides)
-    oh = (h - kh + 2 * ph) // sh + 1
-    ow = (w - kw + 2 * pw) // sw + 1
+    oh = (h - kh + pt + pb) // sh + 1
+    ow = (w - kw + pl + pr) // sw + 1
 
     # Create schedule config
     cfg.define_split("tile_ic", ic, num_outputs=2)
@@ -102,7 +103,6 @@ def _create_tuning_space(cfg, data, kernel, strides, padding, dilation, layout):
 @autotvm.register_topi_compute(conv2d, 'cpu', ['direct'])
 def _declaration_conv(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
     out_dtype = data.dtype if out_dtype is None else out_dtype
-    padding = padding if isinstance(padding, (tuple, list)) else (padding, padding)
     strides = strides if isinstance(strides, (tuple, list)) else (strides, strides)
     dilation = dilation if isinstance(dilation, (tuple, list)) else (dilation, dilation)
 
@@ -126,7 +126,7 @@ def _declaration_conv(cfg, data, kernel, strides, padding, dilation, layout, out
     #     # specialize for INT8 1X1 conv on X86
     #     return conv2d_avx_1x1._declaration_conv_nhwc_pack(cfg, data, kernel, strides,
     #                                                       padding, dilation, out_dtype)
-    elif layout == 'NHWC':
+    if layout == 'NHWC':
         return nn.conv2d_nhwc(data, kernel, strides, padding, dilation, out_dtype)
     raise ValueError("not support this layout {} yet".format(layout))
 
@@ -141,24 +141,27 @@ def _declaration_conv_impl(cfg, data, kernel, strides, padding, dilation, layout
     else:
         dilation_h, dilation_w = dilation
 
-    HPAD, WPAD = padding
     HSTR, WSTR = strides
-
     batch_size, in_channel, in_height, in_width = get_const_tuple(data.shape)
     num_filter, _, kernel_height, kernel_width = get_const_tuple(kernel.shape)
 
-    pad_height = in_height + 2 * HPAD
-    pad_width = in_width + 2 * WPAD
+    pad_top, pad_left, pad_down, pad_right = get_pad_tuple(padding, (kernel_height, kernel_width))
+    pad_h = pad_top + pad_down
+    pad_w = pad_left + pad_right
+
+    pad_height = in_height + pad_h
+    pad_width = in_width + pad_w
 
     dilated_kernel_h = (kernel_height - 1) * dilation_h + 1
     dilated_kernel_w = (kernel_width - 1) * dilation_w + 1
-    out_height = (in_height + 2 * HPAD - dilated_kernel_h) // HSTR + 1
-    out_width = (in_width + 2 * WPAD - dilated_kernel_w) // WSTR + 1
+    out_height = (in_height + pad_h - dilated_kernel_h) // HSTR + 1
+    out_width = (in_width + pad_w - dilated_kernel_w) // WSTR + 1
 
     # pack data
-    DOPAD = (HPAD != 0 or WPAD != 0)
+    DOPAD = (pad_h != 0 or pad_w != 0)
     if DOPAD:
-        data_pad = pad(data, (0, 0, HPAD, WPAD), name="data_pad")
+        data_pad = pad(data, (0, 0, pad_top, pad_left), (0, 0, pad_down, pad_right), \
+            name="data_pad")
     else:
         data_pad = data
 
@@ -353,8 +356,9 @@ def _conv2d_infer_layout(workload, cfg):
     out_channel, _, k_height, k_width = kernel[:-1]
     idxdiv = tvm.indexdiv
 
-    out_height = idxdiv(in_height + 2 * padding[0] - k_height, strides[0]) + 1
-    out_width = idxdiv(in_width + 2 * padding[1] - k_width, strides[1]) + 1
+    pt, pl, pb, pr = get_pad_tuple(padding, (k_height, k_width))
+    out_height = idxdiv(in_height + pt + pb - k_height, strides[0]) + 1
+    out_width = idxdiv(in_width + pl + pr - k_width, strides[1]) + 1
     tile_ic, tile_oc = cfg["tile_ic"].size[-1], cfg["tile_oc"].size[-1]
     in_shape = (batch_size, idxdiv(in_channel, tile_ic), in_height, in_width, tile_ic)
     in_layout = "NCHW%dc" % tile_ic
@@ -419,7 +423,7 @@ def _schedule_conv2d_NCHWc(cfg, outs):
                 data = data_pad.op.input_tensors[0]
 
             args = [s, cfg, data_vec, conv_out, outs[0]]
-            target = tvm.target.current_target(allow_none=False)
+            target = tvm.target.Target.current(allow_none=False)
             _, _, kh, kw, _, _, = get_const_tuple(kernel.shape)
             if kh == 1 and kw == 1:
                 conv2d_avx_1x1._schedule_conv_NCHWc(*args)

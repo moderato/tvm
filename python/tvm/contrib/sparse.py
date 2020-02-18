@@ -16,12 +16,13 @@
 # under the License.
 """Tensor and Operation class for computation declaration."""
 # pylint: disable=invalid-name
-from __future__ import absolute_import as _abs
 import numpy as _np
+from tvm.runtime import ndarray as _nd
+
 from .. import expr as _expr
 from .. import api as _api
 from .. import tensor as _tensor
-from .. import ndarray as _nd
+
 
 float32 = "float32"
 itype = 'int32'
@@ -37,7 +38,7 @@ class CSRNDArray(object):
             The corresponding a dense numpy array,
             or a tuple for constructing a sparse matrix directly.
 
-        ctx: tvm.TVMContext
+        ctx: tvmContext
             The corresponding context.
 
         shape : tuple of int
@@ -167,7 +168,7 @@ def placeholder(shape, nonzeros=None, dtype=None, name="placeholder", stype=None
     tensor: SparsePlaceholderOp
         The created sparse tensor placeholder
     """
-    shape = (shape,) if isinstance(shape, _expr.Expr) else shape
+    shape = (shape,) if isinstance(shape, _expr.PrimExpr) else shape
     nonzeros = 0 if nonzeros is None else nonzeros
     dtype = float32 if dtype is None else dtype
     stype = 'csr' if stype is None else stype

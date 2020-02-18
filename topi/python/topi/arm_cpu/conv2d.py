@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-# pylint: disable=invalid-name, unused-variable, no-else-return, unused-argument
+# pylint: disable=invalid-name, unused-variable, no-else-return, unused-argument, import-outside-toplevel
 """Conv2D schedule for ARM CPU"""
 from __future__ import absolute_import as _abs
 
@@ -24,7 +24,8 @@ import tvm
 from tvm import autotvm
 import tvm.contrib.nnpack
 
-from ..generic import schedule_conv2d_nchw, schedule_conv2d_winograd_without_weight_transform, \
+from ..generic import schedule_conv2d_nchw, schedule_conv2d_nhwc, \
+                      schedule_conv2d_winograd_without_weight_transform, \
                       schedule_conv2d_winograd_nnpack_without_weight_transform
 from ..util import traverse_inline, get_const_tuple
 from ..nn import dilate, pad, conv2d, conv2d_alter_layout, \
@@ -34,7 +35,9 @@ from ..nn import dilate, pad, conv2d, conv2d_alter_layout, \
 from ..nn.util import get_const_int, get_pad_tuple
 from ..nn.winograd_util import winograd_transform_matrices
 from .conv2d_spatial_pack import conv2d_spatial_pack_nchw, \
-                                 schedule_conv2d_spatial_pack_nchw
+                                 conv2d_spatial_pack_nhwc, \
+                                 schedule_conv2d_spatial_pack_nchw, \
+                                 schedule_conv2d_spatial_pack_nhwc
 
 logger = logging.getLogger('topi')
 
@@ -78,6 +81,9 @@ def conv2d_arm_cpu(cfg, data, kernel, strides, padding, dilation, layout, out_dt
     if layout == 'NCHW':
         return conv2d_spatial_pack_nchw(cfg, data, kernel, strides, padding,
                                         dilation, out_dtype, num_tile=2)
+    elif layout == 'NHWC':
+        return conv2d_spatial_pack_nhwc(cfg, data, kernel, strides, padding,
+                                        dilation, out_dtype)
     else:
         raise ValueError("Unsupported layout {}".format(layout))
 
@@ -136,6 +142,34 @@ def schedule_conv2d_nchw_arm_cpu(cfg, outs):
     traverse_inline(s, outs[0].op, _callback)
     return s
 
+@autotvm.register_topi_schedule(schedule_conv2d_nhwc, 'arm_cpu', ['direct'])
+def schedule_conv2d_nhwc_arm_cpu(cfg, outs):
+    """TOPI schedule callback for conv2d
+
+    Parameters
+    ----------
+    cfg: ConfigEntity
+        The config for this template
+
+    outs: Array of Tensor
+        The computation graph description of conv2d
+        in the format of an array of tensors.
+
+    Returns
+    -------
+    s: Schedule
+        The computation schedule for conv2d.
+    """
+    s = tvm.create_schedule([x.op for x in outs])
+
+    def _callback(op):
+        if 'spatial_conv_output_NHWC' in op.tag:
+            schedule_conv2d_spatial_pack_nhwc(cfg, s, op, outs[0])
+
+    traverse_inline(s, outs[0].op, _callback)
+    return s
+
+
 @autotvm.register_topi_compute(conv2d, 'arm_cpu', ['winograd'])
 def conv2d_arm_cpu_winograd(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
     """ TOPI compute callback. Use winograd template """
@@ -163,11 +197,11 @@ def _decl_winograd(cfg, data, kernel, strides, padding, dilation, layout, out_dt
         CO *= VC
         KH, KW = H_CAT - tile_size + 1, W_CAT - tile_size + 1
     HSTR, WSTR = strides if isinstance(strides, (tuple, list)) else (strides, strides)
-    HPAD, WPAD, _, _ = get_pad_tuple(padding, kernel)
+    pt, pl, pb, pr = get_pad_tuple(padding, (KH, KW))
 
     assert layout == 'NCHW'
     assert KH == 3 and KW == 3 and HSTR == 1 and WSTR == 1
-    data_pad = pad(data, (0, 0, HPAD, WPAD), name="data_pad")
+    data_pad = pad(data, (0, 0, pt, pl), (0, 0, pb, pr), name="data_pad")
 
     idxd = tvm.indexdiv
     idxm = tvm.indexmod
@@ -180,8 +214,8 @@ def _decl_winograd(cfg, data, kernel, strides, padding, dilation, layout, out_dt
     K = CO
     C = CI
 
-    H = (IH + 2 * HPAD - 3) // HSTR + 1
-    W = (IW + 2 * WPAD - 3) // WSTR + 1
+    H = (IH + pt + pb - 3) // HSTR + 1
+    W = (IW + pl + pr - 3) // WSTR + 1
     nH, nW = (H + m-1) // m, (W + m-1) // m
     P = N * nH * nW
 
@@ -353,12 +387,13 @@ def conv2d_arm_cpu_winograd_nnpack(
     assert len(kernel.shape) == 4
     CO, _, KH, KW = get_const_tuple(kernel.shape)
     HSTR, WSTR = strides if isinstance(strides, (tuple, list)) else (strides, strides)
-    HPAD, WPAD, _, _ = get_pad_tuple(padding, kernel)
+    pt, pl, pb, pr = get_pad_tuple(padding, (KH, KW))
 
     assert layout == 'NCHW'
-    assert KH == 3 and KW == 3 and HPAD == 1 and WPAD == 1 and HSTR == 1 and WSTR == 1
-    H = (IH + 2 * HPAD - 3) // HSTR + 1
-    W = (IW + 2 * WPAD - 3) // WSTR + 1
+    assert KH == 3 and KW == 3 and pt == 1 and pb == 1 and pl == 1 and pr == 1 and HSTR == 1\
+        and WSTR == 1
+    H = (IH + pt + pb - 3) // HSTR + 1
+    W = (IW + pl + pr - 3) // WSTR + 1
 
     cfg.define_knob('winograd_nnpack_algorithm', [convolution_algorithm])
 
@@ -373,7 +408,7 @@ def conv2d_arm_cpu_winograd_nnpack(
         output = tvm.contrib.nnpack.convolution_inference_without_weight_transform(
             data, transformed_kernel,
             bias=None,
-            padding=[HPAD, HPAD, WPAD, WPAD],
+            padding=[pt, pb, pl, pr],
             stride=[HSTR, WSTR],
             algorithm=cfg['winograd_nnpack_algorithm'].val)
 
@@ -433,13 +468,14 @@ def conv2d_winograd_nnpack_ww(cfg, data, transformed_kernel, bias, strides,
     assert len(transformed_kernel.shape) == 4
     CO, _, _, _ = get_const_tuple(transformed_kernel.shape)
     HSTR, WSTR = strides if isinstance(strides, (tuple, list)) else (strides, strides)
-    HPAD, WPAD, _, _ = get_pad_tuple(padding, (3, 3))
     KH, KW = 3, 3
+    pt, pl, pb, pr = get_pad_tuple(padding, (KH, KW))
 
     assert layout == 'NCHW'
-    assert KH == 3 and KW == 3 and HPAD == 1 and WPAD == 1 and HSTR == 1 and WSTR == 1
-    H = (IH + 2 * HPAD - 3) // HSTR + 1
-    W = (IW + 2 * WPAD - 3) // WSTR + 1
+    assert KH == 3 and KW == 3 and pt == 1 and pb == 1 and pl == 1 and pr == 1 and HSTR == 1\
+        and WSTR == 1
+    H = (IH + pt + pb - 3) // HSTR + 1
+    W = (IW + pl + pr - 3) // WSTR + 1
 
     assert N == 1
     with tvm.tag_scope("winograd_nnpack_conv2d_output"):
@@ -447,7 +483,7 @@ def conv2d_winograd_nnpack_ww(cfg, data, transformed_kernel, bias, strides,
             data=data,
             transformed_kernel=transformed_kernel,
             bias=bias,
-            padding=[HPAD, HPAD, WPAD, WPAD],
+            padding=[pt, pb, pl, pr],
             stride=[HSTR, WSTR],
             algorithm=cfg['winograd_nnpack_algorithm'].val)
 
@@ -478,22 +514,21 @@ def _alter_conv2d_layout_arm(attrs, inputs, tinfos, F):
 
     Parameters
     ----------
-    attrs : nnvm.top.AttrDict or tvm.attrs.Attrs
+    attrs : tvm.ir.Attrs
         Attributes of current convolution
-    inputs : nnvm.symbol or tvm.relay.Expr
+    inputs : tvm.relay.Expr
         Grouped input symbols
     tinfos : list
         Input shape and dtype
     F: symbol
-        The context, can be either nnvm.sym or relay.op
+        The context, can be either relay.op
 
     Note
     ----
     Unlike other TOPI functions, this function operates on both graph level and operator level,
-    so we have to pass 'F' to make it support our two versions of graph IR, NNVM and Relay.
+    so we have to pass 'F' to make it support our two versions of graph IR,  Relay.
     """
-    copy_inputs = [s for s in inputs]
-
+    copy_inputs = list(inputs)
     new_attrs = {k: attrs[k] for k in attrs.keys()}
 
     if F.__name__ == 'tvm.relay.op':
@@ -553,7 +588,7 @@ def _alter_conv2d_layout_arm(attrs, inputs, tinfos, F):
     idxd = tvm.indexdiv
 
     if groups == 1:
-        target = tvm.target.current_target()
+        target = tvm.target.Target.current()
         dispatch_ctx = autotvm.DispatchContext.current
         cfg = dispatch_ctx.query(target, workload)
 
@@ -658,12 +693,12 @@ def _alter_conv2d_layout_arm(attrs, inputs, tinfos, F):
         else:
             raise RuntimeError("Unsupported template_key '%s'" % cfg.template_key)
     else:
-        target = tvm.target.current_target()
+        target = tvm.target.Target.current()
         dispatch_ctx = autotvm.DispatchContext.current
         cfg = dispatch_ctx.query(target, workload)
 
         if cfg.is_fallback:  # if is fallback, clear query cache and return None
-            autotvm.task.clear_fallback_cache(tvm.target.current_target(), workload)
+            autotvm.task.clear_fallback_cache(tvm.target.Target.current(), workload)
             if layout == 'NHWC' and kernel_layout == 'HWOI':
                 new_attrs['data_layout'] = 'NCHW'
                 new_attrs['kernel_layout'] = 'OIHW'

@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-# pylint: disable=unused-variable,invalid-name
+# pylint: disable=unused-variable,invalid-name, not-context-manager
 """
 Decorator and utilities for the integration with TOPI and Relay
 99.9% copy-paste of implementation by @MerryMercy
@@ -32,12 +32,12 @@ logger = logging.getLogger('autotvm')
 
 
 # TODO(moreau89) find a more elegant way to lower for VTAs
-def _lower(func,
+def _lower(mod,
            target,
            params):
     """ Helper to lower VTA properly.
     """
-
+    # pylint: disable=import-outside-toplevel
     from tvm import relay
     from tvm.relay.backend import graph_runtime_codegen
 
@@ -45,16 +45,17 @@ def _lower(func,
         with relay.build_config(opt_level=3, disabled_pass={"AlterOpLayout"}):
             import vta
             with vta.build_config():
-                mod, _ = relay.optimize(func, target, params)
+                mod, _ = relay.optimize(mod, target, params)
                 grc = graph_runtime_codegen.GraphRuntimeCodegen(None, target)
-                return grc.codegen(mod["main"])
+                grc.codegen(mod["main"])
     # default case
-    mod, _ = relay.optimize(func, target, params)
-    grc = graph_runtime_codegen.GraphRuntimeCodegen(None, target)
-    return grc.codegen(mod["main"])
+    compiler = relay.vm.VMCompiler()
+    if params:
+        compiler.set_params(params)
+    compiler.lower(mod, target=target)
 
 
-def extract_from_program(func, params, ops, target, target_host=None,
+def extract_from_program(mod, params, ops, target, target_host=None,
                          template_keys=None):
     """ Extract tuning tasks from a relay program.
 
@@ -62,8 +63,8 @@ def extract_from_program(func, params, ops, target, target_host=None,
 
     Parameters
     ----------
-    func: relay.expr.Function
-        The func to tune
+    mod: tvm.IRModule or relay.expr.Function
+        The module or function to tune
     params: dict of str to numpy array
         The associated parameters of the program
     ops: List of relay op
@@ -81,11 +82,11 @@ def extract_from_program(func, params, ops, target, target_host=None,
     task: Array of autotvm.task.Task
         collected tasks
     """
-    return extract_from_multiple_program([func], [params], ops, target, target_host,
-                                         template_keys=template_keys)
+    return extract_from_multiple_program([mod], [params], ops, target, target_host,
+                                         template_keys)
 
 
-def extract_from_multiple_program(funcs, params, ops, target, target_host=None,
+def extract_from_multiple_program(mods, params, ops, target, target_host=None,
                                   template_keys=None):
     """ Extract tuning tasks from multiple relay programs.
 
@@ -94,8 +95,8 @@ def extract_from_multiple_program(funcs, params, ops, target, target_host=None,
 
     Parameters
     ----------
-    funcs: List of relay.expr.Function
-        The list of functions to tune
+    mods: List[tvm.IRModule] or List[relay.expr.Function]
+        The list of modules or functions to tune
     params: List of dict of str to numpy array
         The associated parameters of the programs
     ops: List of relay op
@@ -113,6 +114,7 @@ def extract_from_multiple_program(funcs, params, ops, target, target_host=None,
     task: Array of autotvm.task.Task
         collected tasks
     """
+    # pylint: disable=import-outside-toplevel
     import tvm.relay.op
     from tvm import relay
     import topi
@@ -123,11 +125,15 @@ def extract_from_multiple_program(funcs, params, ops, target, target_host=None,
     # relay op -> topi compute
     OP2TOPI = {
         tvm.relay.op.nn.conv2d: [topi.nn.conv2d, topi.nn.depthwise_conv2d_nchw,
-                                 topi.nn.group_conv2d_nchw, topi.nn.conv2d_NCHWc],
+                                 topi.nn.group_conv2d_nchw,
+                                 topi.nn.conv2d_NCHWc,
+                                 topi.nn.conv2d_NCHWc_int8],
         tvm.relay.op.nn.conv2d_transpose: [topi.nn.conv2d_transpose_nchw],
         tvm.relay.op.nn.dense: [topi.nn.dense],
         tvm.relay.op.nn.batch_matmul: [topi.nn.batch_matmul],
         tvm.relay.op.nn.deformable_conv2d: [topi.nn.deformable_conv2d_nchw],
+        tvm.relay.op.nn.conv1d_transpose: [topi.nn.conv1d_transpose_ncw],
+        tvm.relay.op.nn.conv3d: [topi.nn.conv3d],
     }
 
     topi_funcs = []
@@ -144,10 +150,13 @@ def extract_from_multiple_program(funcs, params, ops, target, target_host=None,
         old_state = logger.disabled
         logger.disabled = True
 
-        for func, param in zip(funcs, params):
+        for mod, param in zip(mods, params):
+            if isinstance(mod, relay.expr.Function):
+                mod = tvm.IRModule.from_expr(mod)
+            assert isinstance(mod, tvm.IRModule), \
+                "only support relay Module or Function to be tuned"
             relay.backend.compile_engine.get().clear()
             # wrap build call in thread to avoid multiprocessing problems
-            mod = relay.Module.from_expr(func)
             build_thread = threading.Thread(target=_lower,
                                             args=(mod, target, param))
             build_thread.start()

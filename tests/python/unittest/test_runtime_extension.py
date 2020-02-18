@@ -19,7 +19,7 @@ import numpy as np
 
 @tvm.register_extension
 class MyTensorView(object):
-    _tvm_tcode = tvm.TypeCode.ARRAY_HANDLE
+    _tvm_tcode = tvm.TypeCode.DLTENSOR_HANDLE
     def __init__(self, arr):
         self.arr = arr
 
@@ -39,7 +39,7 @@ def test_dltensor_compatible():
     stmt = ib.get()
     fapi = tvm.ir_pass.MakeAPI(stmt, "arange", [Ab], 0, True)
     fapi = tvm.ir_pass.LowerTVMBuiltin(fapi)
-    f = tvm.codegen.build_module(fapi, "stackvm")
+    f = tvm.target.codegen.build_module(fapi, "stackvm")
     a = tvm.nd.array(np.zeros(10, dtype=dtype))
     aview = MyTensorView(a)
     f(aview)

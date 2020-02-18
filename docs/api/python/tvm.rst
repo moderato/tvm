@@ -21,9 +21,8 @@ The user facing API for computation declaration.
 
 .. autosummary::
 
-   tvm.load_json
-   tvm.save_json
    tvm.var
+   tvm.size_var
    tvm.const
    tvm.convert
    tvm.placeholder
@@ -46,9 +45,9 @@ The user facing API for computation declaration.
    tvm.max
    tvm.tag_scope
 
-.. autofunction:: tvm.load_json
-.. autofunction:: tvm.save_json
+
 .. autofunction:: tvm.var
+.. autofunction:: tvm.size_var
 .. autofunction:: tvm.const
 .. autofunction:: tvm.convert
 .. autofunction:: tvm.placeholder

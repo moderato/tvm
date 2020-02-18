@@ -18,9 +18,11 @@
 """Backend compiler related feature registration"""
 from __future__ import absolute_import
 import topi
+from topi.util import get_const_tuple
 from .op import register_compute, register_schedule, register_pattern, register_shape_func
 from .op import schedule_injective, OpPattern
 from ...hybrid import script
+from ...api import convert
 
 schedule_broadcast = schedule_injective
 schedule_elemwise = schedule_injective
@@ -42,6 +44,7 @@ register_schedule("sign", schedule_broadcast)
 register_schedule("abs", schedule_broadcast)
 register_schedule("tanh", schedule_broadcast)
 register_schedule("logical_not", schedule_broadcast)
+register_schedule("bitwise_not", schedule_broadcast)
 register_schedule("negative", schedule_broadcast)
 register_schedule("copy", schedule_broadcast)
 
@@ -55,6 +58,9 @@ register_schedule("mod", schedule_broadcast)
 register_schedule("floor_mod", schedule_broadcast)
 register_schedule("logical_and", schedule_broadcast)
 register_schedule("logical_or", schedule_broadcast)
+register_schedule("bitwise_and", schedule_broadcast)
+register_schedule("bitwise_or", schedule_broadcast)
+register_schedule("bitwise_xor", schedule_broadcast)
 register_schedule("equal", schedule_broadcast)
 register_schedule("not_equal", schedule_broadcast)
 register_schedule("less", schedule_broadcast)
@@ -120,20 +126,20 @@ def _cast_shape_function(x):
 def cast_shape_func(attrs, inputs, out_ndims):
     return [_cast_shape_function(*inputs)]
 
-# shape func
 @script
-def _full_shape_func(x):
-    out_ndim = len(x)
+def _full_shape_func(shape):
+    out_ndim = len(shape)
     out = output_tensor((out_ndim,), "int64")
     for i in const_range(out_ndim):
-        out[i] = x[i]
+        out[i] = int64(shape[i])
     return out
 
 def full_shape_func(attrs, inputs, out_ndims):
     """
     Shape func for zeros, zeros_like, ones, ones_like.
     """
-    return [_full_shape_func(*inputs)]
+    shape = get_const_tuple(attrs.shape)
+    return [_full_shape_func(convert(shape))]
 
 @script
 def _broadcast_shape_func(x, y, ndim):
@@ -177,9 +183,11 @@ def elemwise_shape_func(attrs, inputs, _):
 
 register_shape_func("cast", False, cast_shape_func)
 register_shape_func("zeros", False, full_shape_func)
-register_shape_func("zeros_like", False, full_shape_func)
+register_shape_func("zeros_like", False, elemwise_shape_func)
 register_shape_func("ones", False, full_shape_func)
-register_shape_func("ones_like", False, full_shape_func)
+register_shape_func("ones_like", False, elemwise_shape_func)
+register_shape_func("full", False, full_shape_func)
+register_shape_func("full_like", False, elemwise_shape_func)
 
 register_shape_func("add", False, broadcast_shape_func)
 register_shape_func("subtract", False, broadcast_shape_func)
@@ -190,12 +198,18 @@ register_shape_func("mod", False, broadcast_shape_func)
 register_shape_func("floor_mod", False, broadcast_shape_func)
 register_shape_func("logical_and", False, broadcast_shape_func)
 register_shape_func("logical_or", False, broadcast_shape_func)
+register_shape_func("bitwise_and", False, broadcast_shape_func)
+register_shape_func("bitwise_or", False, broadcast_shape_func)
+register_shape_func("bitwise_xor", False, broadcast_shape_func)
 register_shape_func("equal", False, broadcast_shape_func)
 register_shape_func("not_equal", False, broadcast_shape_func)
 register_shape_func("less", False, broadcast_shape_func)
 register_shape_func("less_equal", False, broadcast_shape_func)
 register_shape_func("greater", False, broadcast_shape_func)
 register_shape_func("greater_equal", False, broadcast_shape_func)
+register_shape_func("maximum", False, broadcast_shape_func)
+register_shape_func("minimum", False, broadcast_shape_func)
 
 register_shape_func("sqrt", False, elemwise_shape_func)
 register_shape_func("negative", False, elemwise_shape_func)
+register_shape_func("exp", False, elemwise_shape_func)

@@ -52,16 +52,16 @@ def get_ref_func(data,
     shifted_kernel = relay.op.subtract(casted_kernel,
             relay.const(kernel_zero_point, "int32"))
     func = relay.op.nn.conv2d(shifted_data,
-                             shifted_kernel,
-                             padding=padding,
-                             strides=strides,
-                             dilation=dilation,
-                             groups=groups,
-                             channels=channels,
-                             kernel_size=kernel_size,
-                             out_dtype=out_dtype,
-                             data_layout=data_layout,
-                             kernel_layout=kernel_layout)
+                              shifted_kernel,
+                              padding=padding,
+                              strides=strides,
+                              dilation=dilation,
+                              groups=groups,
+                              channels=channels,
+                              kernel_size=kernel_size,
+                              out_dtype=out_dtype,
+                              data_layout=data_layout,
+                              kernel_layout=kernel_layout)
 
     func = relay.Function(relay.analysis.free_vars(func), func)
     return func
@@ -79,14 +79,14 @@ def get_qnn_func(data,
                  data_layout,
                  kernel_layout,
                  out_dtype,
-                 groups,
-                 channels=None):
+                 channels,
+                 groups):
     func = relay.qnn.op.conv2d(
             data, kernel,
-            input_zero_point=input_zero_point,
-            kernel_zero_point=kernel_zero_point,
-            input_scale=input_scale,
-            kernel_scale=kernel_scale,
+            input_zero_point=relay.const(input_zero_point, 'int32'),
+            kernel_zero_point=relay.const(kernel_zero_point, 'int32'),
+            input_scale=relay.const(input_scale, 'float32'),
+            kernel_scale=relay.const(kernel_scale, 'float32'),
             kernel_size=kernel_size,
             strides=strides,
             dilation=dilation,
@@ -98,7 +98,7 @@ def get_qnn_func(data,
             kernel_layout=kernel_layout)
 
     mod = relay.Function(relay.analysis.free_vars(func), func)
-    mod = relay.Module.from_expr(mod)
+    mod = tvm.IRModule.from_expr(mod)
     return mod
 
 def get_funcs(data_shape,
@@ -116,12 +116,23 @@ def get_funcs(data_shape,
               data_layout,
               kernel_layout,
               out_dtype,
-              groups=1,
-              channels=None):
+              groups=1):
     data = relay.var("data", shape=data_shape,
             dtype=data_dtype)
     kernel = relay.var("kernel", shape=kernel_shape,
             dtype=kernel_dtype)
+
+    if groups > 1:
+        channels = groups
+    elif kernel_layout == "OIHW":
+        channels = kernel_shape[0]
+    elif kernel_layout == "HWIO":
+        channels = kernel_shape[3]
+    elif kernel_layout == "HWOI":
+        channels = kernel_shape[2]
+    else:
+        raise NotImplementedError
+
     ref_func = get_ref_func(data,
                             kernel,
                             input_zero_point,
@@ -138,7 +149,7 @@ def get_funcs(data_shape,
                             groups,
                             channels)
     ref_func = run_infer_type(ref_func)
-    ref_func = relay.Module.from_expr(ref_func)
+    ref_func = tvm.IRModule.from_expr(ref_func)
     qnn_func = get_qnn_func(data,
                             kernel,
                             input_zero_point,
@@ -152,8 +163,9 @@ def get_funcs(data_shape,
                             data_layout,
                             kernel_layout,
                             out_dtype,
-                            groups,
-                            channels)
+                            channels,
+                            groups)
+
     return (ref_func, qnn_func)
 
 def verify(ref_func, qnn_func, data_shape, data_dtype, kernel_shape,
@@ -418,7 +430,7 @@ def test_layout():
         verify(ref_func, qnn_func, data_shape, data_dtype,
                 kernel_shape, kernel_dtype)
 
-        # NHWC and HWIO layout. Used in depthwise conv.
+        # NHWC and HWOI layout. Used in depthwise conv.
         data_shape = (2, 2, 4, 1) # NHWC
         data_dtype = 'uint8'
         kernel_shape = (2, 2, 1, 1) # HWOI
@@ -495,7 +507,7 @@ def test_padding():
 def test_dilation():
     with TempOpAttr("qnn.conv2d", "FTVMQnnLegalize", legalize_qnn_conv2d):
 
-        # uint8 input
+        # Non-zero kernel point - fall back to simpler lowering.
         data_shape = (2, 4, 4, 4)
         data_dtype = 'uint8'
         kernel_shape = (3, 4, 2, 2)
@@ -506,6 +518,29 @@ def test_dilation():
                                        kernel_dtype=kernel_dtype,
                                        input_zero_point=5,
                                        kernel_zero_point=3,
+                                       input_scale=1.0,
+                                       kernel_scale=1.0,
+                                       kernel_size=(2, 2),
+                                       padding=(0, 0),
+                                       strides=(1, 1),
+                                       dilation=(2, 2),
+                                       data_layout="NCHW",
+                                       kernel_layout="OIHW",
+                                       out_dtype="int32")
+        verify(ref_func, qnn_func, data_shape, data_dtype,
+                kernel_shape, kernel_dtype)
+
+        # Zero kernel point
+        data_shape = (2, 4, 4, 4)
+        data_dtype = 'uint8'
+        kernel_shape = (3, 4, 2, 2)
+        kernel_dtype = 'uint8'
+        ref_func, qnn_func = get_funcs(data_shape=data_shape,
+                                       data_dtype=data_dtype,
+                                       kernel_shape=kernel_shape,
+                                       kernel_dtype=kernel_dtype,
+                                       input_zero_point=0,
+                                       kernel_zero_point=0,
                                        input_scale=1.0,
                                        kernel_scale=1.0,
                                        kernel_size=(2, 2),
@@ -545,6 +580,7 @@ def test_const_folding():
                                 data_layout="NCHW",
                                 kernel_layout="OIHW",
                                 out_dtype="int32",
+                                channels=kernel_shape[0],
                                 groups=1)
         folded_mod = transform.FoldConstant()(qnn_func)
         folded_func = folded_mod["main"]
@@ -736,7 +772,7 @@ def test_broadcast_layout():
         func = relay.add(bias, func)
         func = relay.add(func, bias)
         func = relay.Function(relay.analysis.free_vars(func), func)
-        mod = relay.Module.from_expr(func)
+        mod = tvm.IRModule.from_expr(func)
         with relay.build_config(opt_level=3):
             graph, lib, params = relay.build(mod, "llvm -mcpu=skylake-avx512")
 
@@ -764,12 +800,12 @@ def test_depthwise_depth_multiplier():
                                        data_layout="NCHW",
                                        kernel_layout="OIHW",
                                        out_dtype="int32",
-                                       groups=4,
-                                       channels=4)
+                                       groups=4)
+
         verify(ref_func, qnn_func, data_shape, data_dtype,
                 kernel_shape, kernel_dtype)
-        
-        
+
+
         # Depthwise multiplier = 2
         data_shape = (10, 4, 16, 16)
         data_dtype = 'uint8'
@@ -790,11 +826,10 @@ def test_depthwise_depth_multiplier():
                                        data_layout="NCHW",
                                        kernel_layout="OIHW",
                                        out_dtype="int32",
-                                       groups=8,
-                                       channels=8)
+                                       groups=8)
         verify(ref_func, qnn_func, data_shape, data_dtype,
                 kernel_shape, kernel_dtype)
-        
+
         # uint8 input, NHWC and HWOI
         # Depthwise multiplier = 1
         data_shape = (2, 16, 16, 4)
@@ -816,11 +851,10 @@ def test_depthwise_depth_multiplier():
                                        data_layout="NHWC",
                                        kernel_layout="HWOI",
                                        out_dtype="int32",
-                                       groups=4,
-                                       channels=4)
+                                       groups=4)
         verify(ref_func, qnn_func, data_shape, data_dtype,
                 kernel_shape, kernel_dtype)
-        
+
         # Depthwise multiplier = 2
         data_shape = (2, 16, 16, 4)
         data_dtype = 'uint8'
@@ -841,10 +875,39 @@ def test_depthwise_depth_multiplier():
                                        data_layout="NHWC",
                                        kernel_layout="HWOI",
                                        out_dtype="int32",
-                                       groups=8,
-                                       channels=8)
+                                       groups=8)
         verify(ref_func, qnn_func, data_shape, data_dtype,
                 kernel_shape, kernel_dtype)
+
+def test_per_channel_kernel_scale():
+    with TempOpAttr("qnn.conv2d", "FTVMQnnLegalize", legalize_qnn_conv2d):
+        data_shape = (2, 1, 2, 4)
+        data_dtype = 'uint8'
+        kernel_shape = (3, 1, 2, 2)
+        kernel_dtype = 'uint8'
+        data = relay.var("data", shape=data_shape,
+                dtype=data_dtype)
+        kernel = relay.var("kernel", shape=kernel_shape,
+                dtype=kernel_dtype)
+        kernel_scales = [2, 2, 2]
+        kernel_scales = relay.const(np.array(kernel_scales).astype('float32'))
+        func = relay.qnn.op.conv2d(
+                data, kernel,
+                input_zero_point=relay.const(0, 'int32'),
+                kernel_zero_point=relay.const(0, 'int32'),
+                input_scale=relay.const(2.0, 'float32'),
+                kernel_scale=kernel_scales,
+                kernel_size=(2, 2),
+                channels=kernel_shape[0],
+                padding=(0, 0),
+                strides=(1, 1),
+                dilation=(1, 1),
+                data_layout="NCHW",
+                kernel_layout="OIHW",
+                out_dtype="int32")
+
+        mod = relay.Function(relay.analysis.free_vars(func), func)
+        mod = tvm.IRModule.from_expr(mod)
 
 if __name__ == "__main__":
     test_no_zero_point()
@@ -861,3 +924,4 @@ if __name__ == "__main__":
     test_tflite_output_multiplier_greater_than_one()
     test_tflite_anistropic_strides()
     test_depthwise_depth_multiplier()
+    test_per_channel_kernel_scale()

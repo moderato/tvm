@@ -43,7 +43,6 @@ from recommonmark.transform import AutoStructify
 curr_path = os.path.dirname(os.path.abspath(os.path.expanduser(__file__)))
 sys.path.insert(0, os.path.join(curr_path, '../python/'))
 sys.path.insert(0, os.path.join(curr_path, '../topi/python'))
-sys.path.insert(0, os.path.join(curr_path, '../nnvm/python'))
 sys.path.insert(0, os.path.join(curr_path, '../vta/python'))
 
 # -- General configuration ------------------------------------------------
@@ -60,7 +59,6 @@ source_parsers = {
     '.md': CommonMarkParser
 }
 os.environ['TVM_BUILD_DOC'] = '1'
-os.environ['NNVM_BUILD_DOC'] = '1'
 # Version information.
 import tvm
 version = tvm.__version__
@@ -140,6 +138,9 @@ pygments_style = 'sphinx'
 
 # If true, `todo` and `todoList` produce output, else they produce nothing.
 todo_include_todos = False
+
+# sort autodoc order by the source file.
+autodoc_member_order = 'bysource'
 
 # -- Options for HTML output ----------------------------------------------
 

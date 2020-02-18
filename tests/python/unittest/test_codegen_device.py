@@ -18,8 +18,34 @@ import tvm
 from tvm.contrib import util
 import numpy as np
 
+def test_large_uint_imm():
+    value =  (1 << 63) + 123
+    other = tvm.const(3, "uint64")
+    n = 12
+    num_thread = 2
+
+    A = tvm.compute((n,), lambda *i: tvm.const(value, "uint64") + other, name='A')
+    s = tvm.create_schedule(A.op)
+    xo, xi = s[A].split(A.op.axis[0], factor=num_thread)
+    s[A].bind(xi, tvm.thread_axis("threadIdx.x"))
+    s[A].bind(xo, tvm.thread_axis("blockIdx.x"))
+
+    def check_target(device):
+        ctx = tvm.context(device, 0)
+        if not ctx.exist:
+            return
+        f = tvm.build(s, [A], device)
+        # launch the kernel.
+        a = tvm.nd.empty((n, ), dtype=A.dtype, ctx=ctx)
+        f(a)
+        assert a.asnumpy()[0] == value + 3
+
+    check_target("cuda")
+    check_target("vulkan")
+
+
 def test_add_pipeline():
-    n = tvm.var('n')
+    n = tvm.size_var('n')
     A = tvm.placeholder((n,), name='A')
     B = tvm.placeholder((), name='B')
     C = tvm.compute(A.shape, lambda *i: A(*i) + B(), name='C')
@@ -56,10 +82,10 @@ def test_add_pipeline():
         ctx = tvm.context(device, 0)
         if not ctx.exist:
             return
-        if not tvm.module.enabled(host):
+        if not tvm.runtime.enabled(host):
             return
-        mhost = tvm.codegen.build_module(fsplits[0], host)
-        mdev = tvm.codegen.build_module(fsplits[1:], device)
+        mhost = tvm.target.codegen.build_module(fsplits[0], host)
+        mdev = tvm.target.codegen.build_module(fsplits[1:], device)
         mhost.import_module(mdev)
         code = mdev.get_source()
         f = mhost.entry_func
@@ -76,7 +102,7 @@ def test_add_pipeline():
         ctx = tvm.context(device, 0)
         if not ctx.exist:
             return
-        if not tvm.module.enabled(host):
+        if not tvm.runtime.enabled(host):
             return
         if device == "cuda":
             fmt = "ptx"
@@ -84,12 +110,12 @@ def test_add_pipeline():
             fmt = "hsaco"
         else:
             fmt = device
-        mhost = tvm.codegen.build_module(fsplits[0], host)
-        mdev = tvm.codegen.build_module(fsplits[1:], device)
+        mhost = tvm.target.codegen.build_module(fsplits[0], host)
+        mdev = tvm.target.codegen.build_module(fsplits[1:], device)
         temp = util.tempdir()
         mpath = temp.relpath("test.%s" % fmt)
         mdev.save(mpath)
-        mdev2 = tvm.module.load(mpath)
+        mdev2 = tvm.runtime.load_module(mpath)
         mhost.import_module(mdev2)
         f = mhost.entry_func
         # launch the kernel.
@@ -112,4 +138,5 @@ def test_add_pipeline():
 
 
 if __name__ == "__main__":
+    test_large_uint_imm()
     test_add_pipeline()

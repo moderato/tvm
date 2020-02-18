@@ -19,7 +19,7 @@ import numpy as np
 
 def test_for():
     ib = tvm.ir_builder.create()
-    n = tvm.var("n")
+    n = tvm.size_var("n")
     A = ib.allocate("float32", n, name="A", scope="global")
     with ib.for_range(0, n, name="i") as i:
         A[i] = A[i] + 1
@@ -28,18 +28,18 @@ def test_for():
 
     body = ib.get()
     print(body)
-    assert isinstance(body, tvm.stmt.AttrStmt)
+    assert isinstance(body, tvm.tir.AttrStmt)
     body = body.body
-    assert isinstance(body, tvm.stmt.Allocate)
+    assert isinstance(body, tvm.tir.Allocate)
     body = body.body
-    assert isinstance(body, tvm.stmt.For)
+    assert isinstance(body, tvm.tir.For)
     body = body.body
-    assert isinstance(body, tvm.stmt.Block)
-    assert isinstance(body.rest, tvm.stmt.For)
+    assert isinstance(body, tvm.tir.SeqStmt)
+    assert isinstance(body[1], tvm.tir.For)
 
 def test_if():
     ib = tvm.ir_builder.create()
-    n = tvm.var("n")
+    n = tvm.size_var("n")
     A = ib.pointer("float32", name="A")
     tmod = tvm.truncmod
     with ib.for_range(0, n, name="i") as i:
@@ -50,24 +50,24 @@ def test_if():
 
     body = ib.get()
     assert A == A
-    assert isinstance(body, tvm.stmt.For)
+    assert isinstance(body, tvm.tir.For)
     body = body.body
-    assert isinstance(body, tvm.stmt.IfThenElse)
-    assert isinstance(body.condition, tvm.expr.EQ)
-    assert isinstance(body.then_case.index, tvm.expr.Var)
+    assert isinstance(body, tvm.tir.IfThenElse)
+    assert isinstance(body.condition, tvm.tir.EQ)
+    assert isinstance(body.then_case.index, tvm.tir.Var)
     assert body.else_case.index.value == 0
 
 def test_prefetch():
     A = tvm.placeholder((10, 20), name="A")
     ib = tvm.ir_builder.create()
-    n = tvm.var("n")
+    n = tvm.size_var("n")
 
     with ib.for_range(0, n, name="i") as i:
         ib.emit(
-            tvm.make.Prefetch(
+            tvm.tir.Prefetch(
                 A.op, A.value_index, A.dtype,
-                [tvm.make.range_by_min_extent(i+1, 2),
-                 tvm.make.range_by_min_extent(0, 20)]))
+                [tvm.ir.Range.make_by_min_extent(i+1, 2),
+                 tvm.ir.Range.make_by_min_extent(0, 20)]))
     body = ib.get()
     assert body.body.bounds[0].extent.value == 2
 
@@ -91,7 +91,7 @@ def test_cpu():
                    name="vector_add", dtype=dtype)
     s = tvm.create_schedule(C.op)
     def check_target(target):
-        if not tvm.module.enabled(target):
+        if not tvm.runtime.enabled(target):
             return
         # build and invoke the kernel.
         fadd = tvm.build(s, [A, B, C], target)
@@ -105,7 +105,7 @@ def test_cpu():
     check_target("llvm")
 
 def test_gpu():
-    n = tvm.var('n')
+    n = tvm.size_var('n')
     dtype = "float32"
     A = tvm.placeholder((n,), name='A')
     B = tvm.placeholder((n,), name='B')
@@ -134,7 +134,7 @@ def test_gpu():
     stmt = tvm.schedule.ScheduleOps(s, bounds)
     def check_target(target):
         n = 1024
-        if not tvm.module.enabled(target):
+        if not tvm.runtime.enabled(target):
             return
         # build and invoke the kernel.
         fadd = tvm.build(s, [A, B, C], target)

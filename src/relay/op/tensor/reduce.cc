@@ -173,8 +173,8 @@ Array<Array<Layout>> ReduceInferCorrectLayout(const Attrs& attrs,
 }
 
 template<typename F>
-Array<Tensor> ReduceCompute(const Attrs& attrs,
-                            const Array<Tensor>& inputs,
+Array<te::Tensor> ReduceCompute(const Attrs& attrs,
+                            const Array<te::Tensor>& inputs,
                             const Type& out_type,
                             const Target& target,
                             F f) {
@@ -209,10 +209,10 @@ inline std::vector<IndexExpr> ReduceShapeImpl(const std::vector<IndexExpr> &in_s
     return in_shape;
   }
 
-  auto max_shape = make_const(Int(64), 1);
+  auto max_shape = tir::make_const(DataType::Int(64), 1);
   bool is_dynamic_input = false;
   for (int64_t axis : r_axes) {
-    if (in_shape[axis].as<IntImm>()) {
+    if (in_shape[axis].as<IntImmNode>()) {
       max_shape *= in_shape[axis];
     } else {
       is_dynamic_input = true;
@@ -221,7 +221,8 @@ inline std::vector<IndexExpr> ReduceShapeImpl(const std::vector<IndexExpr> &in_s
   }
 
   if (is_dynamic_input) {
-    CHECK(reporter->Assert(max_shape < make_const(Int(64), std::numeric_limits<int32_t>::max())))
+    CHECK(reporter->Assert(max_shape < tir::make_const(
+        DataType::Int(64), std::numeric_limits<int32_t>::max())))
       << "The maximum possible index of reduced shape cannot be more than int32 max.";
   }
 
@@ -271,7 +272,7 @@ bool ArgReduceRel(const Array<Type>& types,
 
   // assign output type and shape
   auto oshape = ReduceShapeImpl(in_shape, param, reporter);
-  reporter->Assign(types[1], TensorTypeNode::make(oshape, Int(32)));
+  reporter->Assign(types[1], TensorType(oshape, DataType::Int(32)));
   return true;
 }
 
@@ -296,18 +297,18 @@ bool ReduceRel(const Array<Type>& types,
 
   // assign output type and shape
   auto oshape = ReduceShapeImpl(in_shape, param, reporter);
-  reporter->Assign(types[1], TensorTypeNode::make(oshape, data->dtype));
+  reporter->Assign(types[1], TensorType(oshape, data->dtype));
   return true;
 }
 
 #define RELAY_REGISTER_REDUCE_OP(OpName)                           \
-  TVM_REGISTER_API("relay.op._make." OpName)                       \
-  .set_body_typed<Call(Expr, Array<Integer>, bool, bool)>([](      \
+  TVM_REGISTER_GLOBAL("relay.op._make." OpName)                       \
+  .set_body_typed([](      \
                         Expr data,                                 \
                         Array<Integer> axis,                       \
                         bool keepdims,                             \
                         bool exclude) {                            \
-      auto attrs = make_node<ReduceAttrs>();                       \
+      auto attrs = make_object<ReduceAttrs>();                       \
       attrs->axis = std::move(axis);                               \
       attrs->keepdims = keepdims;                                  \
       attrs->exclude = exclude;                                    \
@@ -319,8 +320,8 @@ bool ReduceRel(const Array<Type>& types,
   .add_argument("data", "Tensor", "The input tensor.")
 
 
-Array<Tensor> ArgMaxCompute(const Attrs& attrs,
-                            const Array<Tensor>& inputs,
+Array<te::Tensor> ArgMaxCompute(const Attrs& attrs,
+                            const Array<te::Tensor>& inputs,
                             const Type& out_type,
                             const Target& target) {
   return ReduceCompute(attrs, inputs, out_type, target, topi::argmax);
@@ -339,8 +340,8 @@ values over a given axis.
 .set_attr<TOpPattern>("TOpPattern", kCommReduce);
 
 
-Array<Tensor> ArgMinCompute(const Attrs& attrs,
-                            const Array<Tensor>& inputs,
+Array<te::Tensor> ArgMinCompute(const Attrs& attrs,
+                            const Array<te::Tensor>& inputs,
                             const Type& out_type,
                             const Target& target) {
   return ReduceCompute(attrs, inputs, out_type, target, topi::argmin);
@@ -357,8 +358,8 @@ values over a given axis.
 .set_attr<FTVMCompute>("FTVMCompute", ArgMinCompute)
 .set_attr<TOpPattern>("TOpPattern", kCommReduce);
 
-Array<Tensor> SumCompute(const Attrs& attrs,
-                         const Array<Tensor>& inputs,
+Array<te::Tensor> SumCompute(const Attrs& attrs,
+                         const Array<te::Tensor>& inputs,
                          const Type& out_type,
                          const Target& target) {
   return ReduceCompute(attrs, inputs, out_type, target, topi::sum);
@@ -391,8 +392,8 @@ Example::
 .set_attr<TOpPattern>("TOpPattern", kCommReduce);
 
 
-Array<Tensor> AllCompute(const Attrs& attrs,
-                         const Array<Tensor>& inputs,
+Array<te::Tensor> AllCompute(const Attrs& attrs,
+                         const Array<te::Tensor>& inputs,
                          const Type& out_type,
                          const Target& target) {
   return ReduceCompute(attrs, inputs, out_type, target, topi::all);
@@ -428,8 +429,8 @@ Example::
 .set_attr<TOpPattern>("TOpPattern", kCommReduce);
 
 
-Array<Tensor> AnyCompute(const Attrs& attrs,
-                         const Array<Tensor>& inputs,
+Array<te::Tensor> AnyCompute(const Attrs& attrs,
+                         const Array<te::Tensor>& inputs,
                          const Type& out_type,
                          const Target& target) {
   return ReduceCompute(attrs, inputs, out_type, target, topi::any);
@@ -465,8 +466,8 @@ Example::
 .set_attr<TOpPattern>("TOpPattern", kCommReduce);
 
 
-Array<Tensor> MaxCompute(const Attrs& attrs,
-                         const Array<Tensor>& inputs,
+Array<te::Tensor> MaxCompute(const Attrs& attrs,
+                         const Array<te::Tensor>& inputs,
                          const Type& out_type,
                          const Target& target) {
   return ReduceCompute(attrs, inputs, out_type, target, topi::max);
@@ -483,8 +484,8 @@ RELAY_REGISTER_REDUCE_OP("max")
 .set_attr<TOpPattern>("TOpPattern", kCommReduce);
 
 
-Array<Tensor> MinCompute(const Attrs& attrs,
-                         const Array<Tensor>& inputs,
+Array<te::Tensor> MinCompute(const Attrs& attrs,
+                         const Array<te::Tensor>& inputs,
                          const Type& out_type,
                          const Target& target) {
   return ReduceCompute(attrs, inputs, out_type, target, topi::min);
@@ -502,8 +503,8 @@ RELAY_REGISTER_REDUCE_OP("min")
 .set_attr<TOpPattern>("TOpPattern", kCommReduce);
 
 
-Array<Tensor> ProdCompute(const Attrs& attrs,
-                          const Array<Tensor>& inputs,
+Array<te::Tensor> ProdCompute(const Attrs& attrs,
+                          const Array<te::Tensor>& inputs,
                           const Type& out_type,
                           const Target& target) {
   return ReduceCompute(attrs, inputs, out_type, target, topi::prod);
@@ -532,11 +533,11 @@ Example::
 .set_attr<TOpPattern>("TOpPattern", kCommReduce);
 
 
-Array<Tensor> MeanCompute(const Attrs& attrs,
-                          const Array<Tensor>& inputs,
+Array<te::Tensor> MeanCompute(const Attrs& attrs,
+                          const Array<te::Tensor>& inputs,
                           const Type& out_type,
                           const Target& target) {
-  IndexExpr count = make_const(inputs[0]->dtype, 1);
+  IndexExpr count = tir::make_const(inputs[0]->dtype, 1);
   const ReduceAttrs* param = attrs.as<ReduceAttrs>();
   CHECK(param != nullptr);
   auto axes = param->axis;
@@ -593,15 +594,15 @@ bool VarianceRel(const Array<Type>& types,
 
   // assign output type and shape
   auto oshape = ReduceShapeImpl(in_shape, param, reporter);
-  reporter->Assign(types[2], TensorTypeNode::make(oshape, data->dtype));
+  reporter->Assign(types[2], TensorType(oshape, data->dtype));
   return true;
 }
 
-Array<Tensor> VarianceCompute(const Attrs& attrs,
-                              const Array<Tensor>& inputs,
+Array<te::Tensor> VarianceCompute(const Attrs& attrs,
+                              const Array<te::Tensor>& inputs,
                               const Type& out_type,
                               const Target& target) {
-  IndexExpr count = make_const(inputs[0]->dtype, 1);
+  IndexExpr count = tir::make_const(inputs[0]->dtype, 1);
   const ReduceAttrs* param = attrs.as<ReduceAttrs>();
   CHECK(param != nullptr);
   auto axes = param->axis;
@@ -624,7 +625,7 @@ Expr MakeVariance(Expr data,
                   Array<Integer> axis,
                   bool keepdims,
                   bool exclude) {
-  auto attrs = make_node<ReduceAttrs>();
+  auto attrs = make_object<ReduceAttrs>();
   attrs->axis = std::move(axis);
   attrs->keepdims = keepdims;
   attrs->exclude = exclude;
@@ -632,7 +633,7 @@ Expr MakeVariance(Expr data,
   return CallNode::make(op, {data, mean}, Attrs(attrs), {});
 }
 
-TVM_REGISTER_API("relay.op._make._variance")
+TVM_REGISTER_GLOBAL("relay.op._make._variance")
 .set_body([](const TVMArgs& args, TVMRetValue* rv) {
   runtime::detail::unpack_call<Expr, 5>(MakeVariance, args, rv);
 });

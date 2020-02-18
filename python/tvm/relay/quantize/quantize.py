@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#pylint: disable=unused-argument
+#pylint: disable=unused-argument, not-context-manager
 """Automatic quantization toolkit."""
 from __future__ import absolute_import
 from . import _quantize
@@ -22,7 +22,7 @@ from ._calibrate import calibrate
 from .. import expr as _expr
 from .. import transform as _transform
 from ... import make as _make
-from ..base import NodeBase, register_relay_node
+from ..base import Object, register_relay_node
 
 
 class QAnnotateKind(object):
@@ -53,7 +53,7 @@ def _forward_op(ref_call, args):
 
 
 @register_relay_node("relay.quantize.QConfig")
-class QConfig(NodeBase):
+class QConfig(Object):
     """Configure the quantization behavior by setting config variables.
 
     Note
@@ -81,7 +81,8 @@ class QConfig(NodeBase):
         "do_simulation": False,
         "round_for_shift": True,
         "debug_enabled_ops": None,
-        "rounding": "UPWARD"
+        "rounding": "UPWARD",
+        "calibrate_chunk_by": -1,
     }
 
     # pylint: disable=no-member

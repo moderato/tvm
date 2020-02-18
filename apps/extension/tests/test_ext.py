@@ -30,7 +30,7 @@ def test_ext_dev():
     B = tvm.compute((n,), lambda *i: A(*i) + 1.0, name='B')
     s = tvm.create_schedule(B.op)
     def check_llvm():
-        if not tvm.module.enabled("llvm"):
+        if not tvm.runtime.enabled("llvm"):
             return
         f = tvm.build(s, [A, B], "ext_dev", "llvm")
         ctx = tvm.ext_dev(0)
@@ -74,7 +74,7 @@ def test_extern_call():
     s = tvm.create_schedule(B.op)
 
     def check_llvm():
-        if not tvm.module.enabled("llvm"):
+        if not tvm.runtime.enabled("llvm"):
             return
         f = tvm.build(s, [A, B], "llvm")
         ctx = tvm.cpu(0)
@@ -87,16 +87,17 @@ def test_extern_call():
 
 
 def test_nd_subclass():
-    a = tvm_ext.NDSubClass.create(addtional_info=3)
-    b = tvm_ext.NDSubClass.create(addtional_info=5)
+    a = tvm_ext.NDSubClass.create(additional_info=3)
+    b = tvm_ext.NDSubClass.create(additional_info=5)
+    assert isinstance(a, tvm_ext.NDSubClass)
     c = a + b
     d = a + a
     e = b + b
-    assert(a.addtional_info == 3)
-    assert(b.addtional_info == 5)
-    assert(c.addtional_info == 8)
-    assert(d.addtional_info == 6)
-    assert(e.addtional_info == 10)
+    assert(a.additional_info == 3)
+    assert(b.additional_info == 5)
+    assert(c.additional_info == 8)
+    assert(d.additional_info == 6)
+    assert(e.additional_info == 10)
 
 
 if __name__ == "__main__":

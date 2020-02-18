@@ -221,13 +221,13 @@ def args_to_workload(x, topi_compute_func=None):
         workload = tuple([args_to_workload(a) for a in x])
     elif isinstance(x, (str, int, float, np.int, np.float, expr.Var)):
         workload = x
-    elif isinstance(x, (expr.StringImm, expr.UIntImm, expr.IntImm, expr.FloatImm)):
+    elif isinstance(x, (expr.StringImm, expr.IntImm, expr.FloatImm)):
         workload = x.value
     elif x is None:
         workload = 0
     else:
         raise RuntimeError('Do not support type "%s" in argument. Consider to use'
-                           'primitive types or tvm.expr.Var only' % type(x))
+                           'primitive types or tvm.tir.Var only' % type(x))
     return (get_func_name(topi_compute_func), ) + workload  if topi_compute_func else workload
 
 def template(func):
@@ -344,7 +344,7 @@ def compute_flop(sch):
             if len(source) != 1:
                 raise FlopCalculationError("Found multiple output in the source of reduce op")
             return num_iter * (_count_flop(combiner[0]) + _count_flop(source[0]))
-        if isinstance(exp, (expr.FloatImm, expr.IntImm, expr.UIntImm)):
+        if isinstance(exp, (expr.FloatImm, expr.IntImm)):
             return 0
         if isinstance(exp, expr.Cast):
             return _count_flop(exp.value)

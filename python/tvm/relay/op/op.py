@@ -17,17 +17,16 @@
 #pylint: disable=unused-argument
 """The base node types for the Relay language."""
 import topi
-
-from ..._ffi.function import _init_api
+import tvm._ffi
+from tvm.driver import lower, build
 
 from ..base import register_relay_node
-from ..expr import Expr
+from ..expr import RelayExpr
 from ...api import register_func
-from ...build_module import lower, build
 from . import _make
 
 @register_relay_node
-class Op(Expr):
+class Op(RelayExpr):
     """A Relay operator definition."""
 
     def __init__(self):
@@ -196,6 +195,23 @@ def register_alter_op_layout(op_name, alter_layout=None, level=10):
     return register(op_name, "FTVMAlterOpLayout", alter_layout, level)
 
 
+def register_convert_op_layout(op_name, convert_layout=None, level=10):
+    """Register convert op layout function for an op
+
+    Parameters
+    ----------
+    op_name : str
+        The name of the operator
+
+    convert_layout: function (attrs: Attrs, inputs: List[Expr]) -> new_expr: Expr
+        The function for changing the layout or replacing the operator
+
+    level : int
+        The priority level
+    """
+    return register(op_name, "FTVMConvertOpLayout", convert_layout, level)
+
+
 def register_legalize(op_name, legal_op=None, level=10):
     """Register legal transformation function for an op
 
@@ -266,8 +282,6 @@ def register_shape_func(op_name, data_dependant, shape_func=None, level=10):
     get(op_name).set_attr("TShapeDataDependant", data_dependant, level)
     return register(op_name, "FShapeFunc", shape_func, level)
 
-_init_api("relay.op", __name__)
-
 @register_func("relay.op.compiler._lower")
 def _lower(name, schedule, inputs, outputs):
     return lower(schedule, list(inputs) + list(outputs), name=name)
@@ -303,3 +317,5 @@ def debug(expr, debug_func=None):
         name = ''
 
     return _make.debug(expr, name)
+
+tvm._ffi._init_api("relay.op", __name__)

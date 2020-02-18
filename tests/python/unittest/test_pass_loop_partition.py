@@ -24,7 +24,7 @@ def collect_visit(stmt, f):
 
 def find_top_produce(stmt):
     def f(x, ret):
-        if isinstance(x, tvm.stmt.ProducerConsumer):
+        if isinstance(x, tvm.tir.ProducerConsumer):
             ret.append(x)
     ret = []
     tvm.ir_pass.PostOrderVisit(stmt, lambda x : f(x, ret))
@@ -52,7 +52,7 @@ def lower(sch, args):
     return stmt
 
 def test_basic():
-    n = tvm.var('n')
+    n = tvm.size_var('n')
     A = tvm.placeholder((n, ), name='A')
     B = tvm.placeholder((n, ), name='B')
 
@@ -64,7 +64,8 @@ def test_basic():
     stmt = tvm.schedule.ScheduleOps(s, bounds)
     stmt = tvm.ir_pass.LoopPartition(stmt, False)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert('if' not in str(stmt.body.body.body.first))
+    assert('if' not in str(stmt.body.body.body[0]))
+    assert('if' in str(stmt.body.body.body[1]))
 
 def test_const_loop():
     n = 21
@@ -79,47 +80,47 @@ def test_const_loop():
     stmt = tvm.schedule.ScheduleOps(s, bounds)
     stmt = tvm.ir_pass.LoopPartition(stmt, True)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert('if' not in str(stmt.body.body.body.first))
+    assert('if' not in str(stmt.body.body.body[0]))
 
 def test_multi_loop():
     ib = tvm.ir_builder.create()
-    m = tvm.var('m')
-    n = tvm.var('n')
+    m = tvm.size_var('m')
+    n = tvm.size_var('n')
     with ib.for_range(0, 4, "i") as i:
         with ib.for_range(0, n, "j") as j:
             with ib.for_range(0, m, "k") as k:
                 with ib.if_scope(ib.likely(i*m+j+k < n)):
-                    ib.emit(tvm.make.Evaluate(m))
+                    ib.emit(tvm.tir.Evaluate(m))
                 with ib.else_scope():
-                    ib.emit(tvm.make.Evaluate(n))
+                    ib.emit(tvm.tir.Evaluate(n))
     stmt = ib.get()
     stmt = tvm.ir_pass.LoopPartition(stmt, False)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert(not any(collect_visit(stmt.body.first, lambda x: isinstance(x, tvm.stmt.IfThenElse))))
+    assert(not any(collect_visit(stmt.body[0], lambda x: isinstance(x, tvm.tir.IfThenElse))))
 
 def test_multi_if():
     ib = tvm.ir_builder.create()
-    m = tvm.var('m')
-    n = tvm.var('n')
+    m = tvm.size_var('m')
+    n = tvm.size_var('n')
     with ib.for_range(0, 4, 'i') as i:
         with ib.for_range(0, n, 'j') as j:
             with ib.for_range(0, m, 'k') as k:
                 with ib.if_scope(ib.likely(i*m+j+k < n)):
-                    ib.emit(tvm.make.Evaluate(m))
+                    ib.emit(tvm.tir.Evaluate(m))
                 with ib.else_scope():
-                    ib.emit(tvm.make.Evaluate(n))
+                    ib.emit(tvm.tir.Evaluate(n))
                 with ib.if_scope(ib.likely(i*m+j-k < n)):
-                    ib.emit(tvm.make.Evaluate(m))
+                    ib.emit(tvm.tir.Evaluate(m))
                 with ib.else_scope():
-                    ib.emit(tvm.make.Evaluate(n))
+                    ib.emit(tvm.tir.Evaluate(n))
     stmt = ib.get()
     stmt = tvm.ir_pass.LoopPartition(stmt, False)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert('if' not in str(stmt.body.first))
+    assert('if' not in str(stmt.body[0]))
 
 def test_thread_axis():
-    m = tvm.var('m')
-    l = tvm.var('l')
+    m = tvm.size_var('m')
+    l = tvm.size_var('l')
     A = tvm.placeholder((m, l), name='A')
     B = tvm.compute((m, l), lambda i, j: A[i, j] + 3, name='B')
     s = tvm.create_schedule(B.op)
@@ -134,14 +135,14 @@ def test_thread_axis():
     stmt = tvm.schedule.ScheduleOps(s, bounds)
     stmt = tvm.ir_pass.LoopPartition(stmt, False)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert('if' not in str(stmt.body.body.body.first))
+    assert('if' not in str(stmt.body.body.body[0]))
 
 def test_vectorize():
-    n = tvm.var('n')
+    n = tvm.size_var('n')
     A = tvm.placeholder((n,), name='A')
     B = tvm.placeholder((n,), name='B')
-    bias = tvm.var("bias", dtype="float32")
-    scale = tvm.var("scale", dtype="float32")
+    bias = tvm.size_var("bias", dtype="float32")
+    scale = tvm.size_var("scale", dtype="float32")
     C = tvm.compute(A.shape, lambda *i: A(*i) + B(*i) * scale + bias, name='C')
     # schedule
     s = tvm.create_schedule(C.op)
@@ -156,36 +157,36 @@ def test_vectorize():
     stmt = lower(s, [A, B])
     body = stmt.body.body.body.body.body
     assert(x.var.name not in str(body.condition))
-    assert(any(collect_visit(body.then_case, lambda x: isinstance(x, tvm.expr.Ramp))))
+    assert(any(collect_visit(body.then_case, lambda x: isinstance(x, tvm.tir.Ramp))))
 
 def test_condition():
     ib = tvm.ir_builder.create()
-    m = tvm.var('m')
-    n = tvm.var('n')
+    m = tvm.size_var('m')
+    n = tvm.size_var('n')
     with ib.for_range(0, tvm.truncdiv(n+3,4), 'i') as i:
       with ib.for_range(0, 4, 'j') as j:
-        ib.emit(tvm.make.Evaluate(
-          tvm.make.Select(ib.likely(i*4+j<n), m, n)))
+        ib.emit(tvm.tir.Evaluate(
+          tvm.tir.Select(ib.likely(i*4+j<n), m, n)))
     stmt = ib.get()
     stmt = tvm.ir_pass.LoopPartition(stmt, False)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert(not any(collect_visit(stmt.first, lambda x: isinstance(x, tvm.expr.Select))))
+    assert(not any(collect_visit(stmt[0], lambda x: isinstance(x, tvm.tir.Select))))
 
 def test_condition_EQ():
     ib = tvm.ir_builder.create()
-    m = tvm.var('m')
-    n = tvm.var('n')
+    m = tvm.size_var('m')
+    n = tvm.size_var('n')
     with ib.for_range(0, 10, 'i') as i:
-            ib.emit(tvm.make.Evaluate(
-                tvm.make.Select(ib.likely(tvm.expr.EQ(i, 5)), m, n)))
+            ib.emit(tvm.tir.Evaluate(
+                tvm.tir.Select(ib.likely(tvm.tir.EQ(i, 5)), m, n)))
     stmt = ib.get()
     stmt = tvm.ir_pass.LoopPartition(stmt, True)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert(not any(collect_visit(stmt.first, lambda x: isinstance(x, tvm.expr.Select))))
+    assert(not any(collect_visit(stmt[0], lambda x: isinstance(x, tvm.tir.Select))))
 
 def test_thread_axis2():
     n = tvm.convert(4096)
-    m = tvm.var('m')
+    m = tvm.size_var('m')
     A = tvm.placeholder((n,), name='A')
     B = tvm.placeholder((n,), name='B')
     C = tvm.compute(A.shape, lambda i: A[i] + B[i], name='C')
@@ -197,22 +198,22 @@ def test_thread_axis2():
     s[C].bind(bx, tvm.thread_axis("blockIdx.x"))
     s[C].bind(tx, tvm.thread_axis("threadIdx.x"))
     stmt = lower(s, [A, B])
-    for_body = stmt.body.body.body.body.body.first
+    for_body = stmt.body.body.body.body.body[0]
     assert('threadIdx' not in str(for_body.extent))
 
 def test_everything_during_deduction():
-    m = tvm.var('m')
-    n = tvm.var('n')
+    m = tvm.size_var('m')
+    n = tvm.size_var('n')
     ib = tvm.ir_builder.create()
     with ib.for_range(0, n, 'i') as i:
         with ib.for_range(0, 32, 'j') as j:
             with ib.if_scope(ib.likely(tvm.truncdiv(i,j) < m)):
                 # this guard will produce everything during deduction
-                ib.emit(tvm.make.Evaluate(m))
+                ib.emit(tvm.tir.Evaluate(m))
     stmt = ib.get()
     stmt = tvm.ir_pass.LoopPartition(stmt, False)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert(isinstance(stmt.body.body, tvm.stmt.IfThenElse))
+    assert(isinstance(stmt.body.body, tvm.tir.IfThenElse))
 
 def test_single_likely():
     n = 60
@@ -228,7 +229,7 @@ def test_single_likely():
     stmt = tvm.schedule.ScheduleOps(s, bounds)
     stmt = tvm.ir_pass.LoopPartition(stmt, True)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.stmt.IfThenElse))))
+    assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.tir.IfThenElse))))
 
 def test_multi_likely():
     n = 94
@@ -249,10 +250,10 @@ def test_multi_likely():
     stmt = tvm.schedule.ScheduleOps(s, bounds)
     stmt = tvm.ir_pass.LoopPartition(stmt, True)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.stmt.IfThenElse))))
+    assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.tir.IfThenElse))))
 
 def test_oneD_pool():
-    m = tvm.var('m')
+    m = tvm.size_var('m')
     ib = tvm.ir_builder.create()
     #data = tvm.placeholder((16,), name = 'data')
     data = ib.pointer("float32", name="A")
@@ -276,7 +277,7 @@ def test_oneD_pool():
     stmt = ib.get()
     stmt = tvm.ir_pass.LoopPartition(stmt, True)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.stmt.IfThenElse))))
+    assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.tir.IfThenElse))))
 
 def test_cce_loop_1():
   ib = tvm.ir_builder.create()
@@ -297,7 +298,7 @@ def test_cce_loop_1():
   stmt = ib.get()
   stmt = tvm.ir_pass.LoopPartition(stmt, True)
   stmt = tvm.ir_pass.Simplify(stmt)
-  assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.stmt.IfThenElse))))
+  assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.tir.IfThenElse))))
 
 def test_cce_loop_2():
   ib = tvm.ir_builder.create()
@@ -316,7 +317,7 @@ def test_cce_loop_2():
   stmt = ib.get()
   stmt = tvm.ir_pass.LoopPartition(stmt, True)
   stmt = tvm.ir_pass.Simplify(stmt)
-  assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.stmt.IfThenElse))))
+  assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.tir.IfThenElse))))
 
 
 def test_cce_loop_3():
@@ -334,7 +335,7 @@ def test_cce_loop_3():
     stmt = ib.get()
     stmt = tvm.ir_pass.LoopPartition(stmt,True)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.stmt.IfThenElse))))
+    assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.tir.IfThenElse))))
 
 def test_conv_tiling():
     HSTR = WSTR = 1
@@ -363,7 +364,7 @@ def test_conv_tiling():
     stmt = tvm.schedule.ScheduleOps(s, bounds)
     stmt = tvm.ir_pass.LoopPartition(stmt, True)
     stmt = tvm.ir_pass.Simplify(stmt)
-    assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.stmt.IfThenElse))))
+    assert(not any(collect_visit(stmt, lambda x: isinstance(x, tvm.tir.IfThenElse))))
 
 
 def test_multilevel_splitting_with_indivisble_factors():
@@ -381,7 +382,7 @@ def test_multilevel_splitting_with_indivisble_factors():
     with tvm.build_config(partition_const_loop=True):
         lowered_body = tvm.lower(s, [A, B]).body
         def visit_stmt(op):
-            return(isinstance(op, tvm.expr.Max))
+            return(isinstance(op, tvm.tir.Max))
         num_max = collect_visit(lowered_body, visit_stmt)
         assert num_max.count(True) == 10
 
@@ -406,7 +407,7 @@ def test_double_splitting_with_indivisible_factors():
     # Find the beginning of the Halide IR corresponding to kernel code
     # and make sure it doesn't have an if statements left
     top_produce = find_top_produce(f.body)
-    assert(not any(collect_visit(top_produce, lambda x: isinstance(x, tvm.stmt.IfThenElse))))
+    assert(not any(collect_visit(top_produce, lambda x: isinstance(x, tvm.tir.IfThenElse))))
 
     # check functional correctness of generated code
     ctx = tvm.context(target, 0)

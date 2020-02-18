@@ -20,21 +20,21 @@ def test_stmt_simplify():
     ib = tvm.ir_builder.create()
     A = ib.pointer("float32", name="A")
     C = ib.pointer("float32", name="C")
-    n = tvm.var("n")
+    n = tvm.size_var("n")
     with ib.for_range(0, n, name="i") as i:
         with ib.if_scope(i < 12):
             A[i] = C[i]
 
-    body = tvm.stmt.LetStmt(n, 10, ib.get())
+    body = tvm.tir.LetStmt(n, 10, ib.get())
     body = tvm.ir_pass.CanonicalSimplify(body)
-    assert isinstance(body.body, tvm.stmt.Store)
+    assert isinstance(body.body, tvm.tir.Store)
 
 
 def test_thread_extent_simplify():
     ib = tvm.ir_builder.create()
     A = ib.pointer("float32", name="A")
     C = ib.pointer("float32", name="C")
-    n = tvm.var("n")
+    n = tvm.size_var("n")
     tx = tvm.thread_axis("threadIdx.x")
     ty = tvm.thread_axis("threadIdx.y")
     ib.scope_attr(tx, "thread_extent", n)
@@ -42,13 +42,13 @@ def test_thread_extent_simplify():
     ib.scope_attr(ty, "thread_extent", 1)
     with ib.if_scope(tx + ty < 12):
         A[tx] = C[tx + ty]
-    body = tvm.stmt.LetStmt(n, 10, ib.get())
+    body = tvm.tir.LetStmt(n, 10, ib.get())
     body = tvm.ir_pass.CanonicalSimplify(body)
-    assert isinstance(body.body.body.body, tvm.stmt.Store)
+    assert isinstance(body.body.body.body, tvm.tir.Store)
 
 
 def test_basic_likely_elimination():
-    n = tvm.var('n')
+    n = tvm.size_var('n')
     X = tvm.placeholder(shape=(n,), name="x")
     W = tvm.placeholder(shape=(n + 1,), dtype="int32", name="w")
 
@@ -87,7 +87,8 @@ def test_complex_likely_elimination():
 
         return tvm.compute(oshape, sls)
 
-    m, n, d, i, l = tvm.var('m'), tvm.var('n'), tvm.var('d'), tvm.var('i'), tvm.var('l')
+    m, n, d, i, l = tvm.size_var('m'), tvm.size_var('n'), tvm.size_var('d'),\
+                    tvm.size_var('i'), tvm.size_var('l')
     data_ph = tvm.placeholder((m, d * 32), name="data")
     indices_ph = tvm.placeholder((i,), name="indices", dtype="int32")
     lengths_ph = tvm.placeholder((n,), name="lengths", dtype="int32")

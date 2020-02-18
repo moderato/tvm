@@ -32,6 +32,7 @@ The whole workflow is illustrated by a matrix multiplication example.
 # Install dependencies
 # --------------------
 # To use autotvm package in TVM, we need to install some extra dependencies.
+# This step (installing xgboost) can be skipped as it doesn't need XGBoost
 # (change "3" to "2" if you use python2):
 #
 # .. code-block:: bash
@@ -171,7 +172,7 @@ def matmul_v1(N, L, M, dtype):
 # However, we also provide another set of API to make the space definition
 # easier and smarter. It is recommended to use this set of high level API.
 #
-# In the flowing example, we use :any:`ConfigSpace.define_split` to define a split
+# In the following example, we use :any:`ConfigSpace.define_split` to define a split
 # knob. It will enumerate all the possible ways to split an axis and construct
 # the space.
 #
@@ -294,7 +295,8 @@ measure_option = autotvm.measure_option(
     builder='local',
     runner=autotvm.LocalRunner(number=5))
 
-# begin tuning, log records to file `matmul.log`
+# Begin tuning with RandomTuner, log records to file `matmul.log`
+# You can use alternatives like XGBTuner.
 tuner = autotvm.tuner.RandomTuner(task)
 tuner.tune(n_trial=10,
            measure_option=measure_option,

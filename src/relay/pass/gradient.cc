@@ -21,16 +21,15 @@
  * \file ad.cc
  * \brief API for Automatic Differentiation for the Relay IR.
  */
-
-#include <tvm/lowered_func.h>
-#include <tvm/operation.h>
+#include <tvm/ir/type_functor.h>
+#include <tvm/tir/lowered_func.h>
+#include <tvm/te/operation.h>
 #include <tvm/relay/expr_functor.h>
 #include <tvm/relay/analysis.h>
 #include <tvm/relay/transform.h>
 #include "pattern_util.h"
 #include "pass_util.h"
 #include "let_list.h"
-#include "../ir/type_functor.h"
 
 namespace tvm {
 namespace relay {
@@ -67,22 +66,27 @@ Type WithGradientType(const Type&);
 /*! return an expression that represent differentiation of e (according to WithGradientType).
  *  This version only work on first order code without control flow.
  */
-Expr FirstOrderGradient(const Expr& e, const Module& mod);
+Expr FirstOrderGradient(const Expr& e, const IRModule& mod);
 
 Type WithGradientType(const Type& t) {
   // TODO(M.K.): stricter checking
   auto ty = t.as<FuncTypeNode>();
   CHECK(ty) << "input should be a function";
-  return FuncTypeNode::make(ty->arg_types,
-                            TupleTypeNode::make({
+  return FuncType(ty->arg_types,
+                            TupleType({
                               ty->ret_type,
-                              TupleTypeNode::make(ty->arg_types)}), {}, {});
+                              TupleType(ty->arg_types)}), {}, {});
 }
 
 //! \brief if the expression is a GlobalVar, transform to it's expression.
-Expr DeGlobal(const Module& mod, const Expr& e) {
+Expr DeGlobal(const IRModule& mod, const Expr& e) {
   if (const auto* x = e.as<GlobalVarNode>()) {
-    return mod->Lookup(GetRef<GlobalVar>(x))->body;
+    BaseFunc base_func = mod->Lookup(GetRef<GlobalVar>(x));
+    if (auto* n = base_func.as<FunctionNode>()) {
+      return n->body;
+    } else {
+      return e;
+    }
   } else {
     return e;
   }
@@ -133,7 +137,7 @@ struct FirstOrderReverseAD : ExprFunctor<ADValue(const Expr &)> {
   const OpMap<FPrimalGradient> rev_map = Op::GetAttr<FPrimalGradient>("FPrimalGradient");
   std::vector<std::function<void(LetList* ll)>> backprop_actions;
   // we assume no closure so no need for lexical scoping
-  std::unordered_map<Var, ADValue, NodeHash, NodeEqual> env;
+  std::unordered_map<Var, ADValue, ObjectHash, ObjectEqual> env;
   LetList* ll;
 
   FirstOrderReverseAD(LetList* ll) : ll(ll) { }
@@ -214,10 +218,10 @@ Type GradRetType(const Function& f) {
     vt.push_back(p->type_annotation);
   }
 
-  return TupleTypeNode::make({f->ret_type, TupleTypeNode::make(vt)});
+  return TupleType({f->ret_type, TupleType(vt)});
 }
 
-Expr FirstOrderGradient(const Expr& re, const Module& mod) {
+Expr FirstOrderGradient(const Expr& re, const IRModule& mod) {
   // Currently we first remove any global functions for the first
   // order case.
   auto e = DeGlobal(mod, re);
@@ -254,13 +258,13 @@ Expr FirstOrderGradient(const Expr& re, const Module& mod) {
   return FunctionNode::make(f->params, body, GradRetType(GetRef<Function>(f)), {});
 }
 
-TVM_REGISTER_API("relay._transform.first_order_gradient")
+TVM_REGISTER_GLOBAL("relay._transform.first_order_gradient")
 .set_body_typed(FirstOrderGradient);
 
 struct ReverseADType : TypeMutator {
   Type VisitType_(const TensorTypeNode* ttn) final {
     Type t = GetRef<Type>(ttn);
-    return TupleTypeNode::make({t, RefTypeNode::make(t)});
+    return TupleType({t, RelayRefType(t)});
   }
 };
 
@@ -294,7 +298,7 @@ Expr LiftTensor(const std::function<Expr(const Expr& t)>& f,
       types.push_back(field->checked_type_);
     }
     auto ret = TupleNode::make(fields);
-    ret->checked_type_ = TupleTypeNode::make(types);
+    ret->checked_type_ = TupleType(types);
     return std::move(ret);
   } else {
     LOG(FATAL) << "unsupported input/output type: " << tt;
@@ -380,12 +384,12 @@ void UpdateGrad(const Type& t, const Expr& arg, const Expr& grad, LetList* ll) {
 }
 
 Expr BPEmpty() {
-  Expr unitF = FunctionNode::make({}, TupleNode::make({}), TupleTypeNode::make({}), {});
+  Expr unitF = FunctionNode::make({}, TupleNode::make({}), TupleType::Empty(), {});
   return RefCreateNode::make(unitF);
 }
 
 struct ReverseAD : ExprMutator {
-  using ADVarMap = std::unordered_map<Var, Var, NodeHash, NodeEqual>;
+  using ADVarMap = std::unordered_map<Var, Var, ObjectHash, ObjectEqual>;
 
   Var bp;
   std::shared_ptr<ADVarMap> ad_vars;
@@ -421,7 +425,7 @@ struct ReverseAD : ExprMutator {
           ll->Push(CallNode::make(RefReadNode::make(dup_bp), {}));
           return CallNode::make(bpv, {});
         }),
-        TupleTypeNode::make({}),
+        TupleType::Empty(),
         {});
       ll->Push(RefWriteNode::make(bp, nbp));
       return ret;
@@ -463,7 +467,7 @@ struct ReverseAD : ExprMutator {
             }
             return CallNode::make(bpv, {});
           }),
-          TupleTypeNode::make({}),
+          TupleType::Empty(),
           {});
         ll->Push(RefWriteNode::make(bp, nbp));
         return ret;
@@ -527,7 +531,7 @@ bool MissingGrad(const Expr& e) {
   return false;
 }
 
-Expr Gradient(const Expr& re, const Module& mod) {
+Expr Gradient(const Expr& re, const IRModule& mod) {
   auto e = DeGlobal(mod, re);
   auto f = e.as<FunctionNode>();
   CHECK(f) << "input need to be a function";
@@ -582,7 +586,7 @@ Expr Gradient(const Expr& re, const Module& mod) {
   return FunctionNode::make(f->params, body, GradRetType(GetRef<Function>(f)), {});
 }
 
-TVM_REGISTER_API("relay._transform.gradient")
+TVM_REGISTER_GLOBAL("relay._transform.gradient")
 .set_body_typed(Gradient);
 
 }  // namespace relay
