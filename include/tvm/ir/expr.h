@@ -32,6 +32,7 @@
 #include <string>
 #include <algorithm>
 #include <limits>
+#include <type_traits>
 
 namespace tvm {
 
@@ -42,6 +43,7 @@ namespace tvm {
 class BaseExprNode : public Object {
  public:
   static constexpr const char* _type_key = "Expr";
+  static constexpr const bool _type_has_method_sequal_reduce = true;
   TVM_DECLARE_BASE_OBJECT_INFO(BaseExprNode, Object);
 };
 
@@ -149,7 +151,7 @@ class RelayExprNode : public BaseExprNode {
   /*!
    * \return The checked_type
    */
-  const Type& checked_type() const;
+  inline const Type& checked_type() const;
   /*!
    * \brief Check if the inferred(checked) type of the Expr
    *  is backed by a TTypeNode and return it.
@@ -196,7 +198,14 @@ class GlobalVarNode : public RelayExprNode {
     v->Visit("_checked_type_", &checked_type_);
   }
 
-  static constexpr const char* _type_key = "relay.GlobalVar";
+  bool SEqualReduce(const GlobalVarNode* other, SEqualReducer equal) const {
+    // name matters for global var.
+    return
+        equal(name_hint, other->name_hint) &&
+        equal.FreeVarEqualImpl(this, other);
+  }
+
+  static constexpr const char* _type_key = "GlobalVar";
   TVM_DECLARE_FINAL_OBJECT_INFO(GlobalVarNode, RelayExprNode);
 };
 
@@ -209,30 +218,6 @@ class GlobalVar : public RelayExpr {
   TVM_DLL explicit GlobalVar(std::string name_hint);
 
   TVM_DEFINE_OBJECT_REF_METHODS(GlobalVar, RelayExpr, GlobalVarNode);
-};
-
-/*!
- * \brief Base node of all functions.
- *
- * We support several variants of functions throughout the stack.
- * All of the functions shares the same type system(via checked_type)
- * to support cross variant calls.
- *
- * \sa BaseFunc
- */
-class BaseFuncNode : public RelayExprNode {
- public:
-  static constexpr const char* _type_key = "BaseFunc";
-  TVM_DECLARE_BASE_OBJECT_INFO(BaseFuncNode, RelayExprNode);
-};
-
-/*!
- * \brief Managed reference to BaseFuncNode.
- * \sa BaseFuncNode
- */
-class BaseFunc : public RelayExpr {
- public:
-  TVM_DEFINE_OBJECT_REF_METHODS(BaseFunc, RelayExpr, BaseFuncNode);
 };
 
 // PrimExprs that are useful as runtime containers.
@@ -249,6 +234,10 @@ class IntImmNode : public PrimExprNode {
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("dtype", &dtype);
     v->Visit("value", &value);
+  }
+
+  bool SEqualReduce(const IntImmNode* other, SEqualReducer equal) const {
+    return equal(dtype, other->dtype) && equal(value, other->value);
   }
 
   static constexpr const char* _type_key = "IntImm";
@@ -284,6 +273,10 @@ class FloatImmNode : public PrimExprNode {
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("dtype", &dtype);
     v->Visit("value", &value);
+  }
+
+  bool SEqualReduce(const FloatImmNode* other, SEqualReducer equal) const {
+    return equal(dtype, other->dtype) && equal(value, other->value);
   }
 
   static constexpr const char* _type_key = "FloatImm";
@@ -332,6 +325,17 @@ class Integer : public IntImm {
    */
   Integer(IntImm other) : IntImm(std::move(other)) {}  // NOLINT(*)
   /*!
+   * \brief Constructor from enum
+   * \tparam Enum The enum type.
+   * \param value The enum value.
+   */
+  template<typename ENum,
+           typename = typename std::enable_if<std::is_enum<ENum>::value>::type>
+  explicit Integer(ENum value) : Integer(static_cast<int>(value)) {
+    static_assert(std::is_same<int, typename std::underlying_type<ENum>::type>::value,
+                  "declare enum to be enum int to use visitor");
+  }
+  /*!
    * \brief Assign an expression to integer.
    * \param other another expression.
    */
@@ -365,7 +369,12 @@ class RangeNode : public Object {
     v->Visit("extent", &extent);
   }
 
+  bool SEqualReduce(const RangeNode* other, SEqualReducer equal) const {
+    return equal(min, other->min) && equal(extent, other->extent);
+  }
+
   static constexpr const char* _type_key = "Range";
+  static constexpr const bool _type_has_method_sequal_reduce = true;
   TVM_DECLARE_FINAL_OBJECT_INFO(RangeNode, Object);
 };
 

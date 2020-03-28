@@ -55,22 +55,33 @@ namespace tir {
  */
 class VarNode : public PrimExprNode {
  public:
-  /*! \brief constructor */
-  VarNode() {}
-  VarNode(DataType dtype, std::string name_hint);
-
   /*!
    * \brief The hint to the variable name.
    * \note Each variable is uniquely identified by its address.
    */
   std::string name_hint;
+  /*!
+   * \brief type annotaion of the variable.
+   *
+   * It is an optional field that provides a refined type of the variable than dtype.
+   *
+   * \sa tvm/ir/type.h for discussion of relations between runtime::DataType and Type.
+   */
+  Type type_annotation;
 
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("dtype", &dtype);
     v->Visit("name", &name_hint);
+    v->Visit("type_annotation", &type_annotation);
   }
 
-  static constexpr const char* _type_key = "Variable";
+  bool SEqualReduce(const VarNode* other, SEqualReducer equal) const {
+    if (!equal(dtype, other->dtype)) return false;
+    if (!equal(type_annotation, other->type_annotation)) return false;
+    return equal.FreeVarEqualImpl(this, other);
+  }
+
+  static constexpr const char* _type_key = "tir.Var";
   TVM_DECLARE_BASE_OBJECT_INFO(VarNode, PrimExprNode);
 };
 
@@ -78,20 +89,25 @@ class VarNode : public PrimExprNode {
 class Var : public PrimExpr {
  public:
   explicit Var(ObjectPtr<Object> n) : PrimExpr(n) {}
-  /*! \brief constructor
+  /*!
+   * \brief Constructor
    * \param name_hint variable name
-   * \param t data type
+   * \param dtype data type
    */
   TVM_DLL explicit Var(std::string name_hint = "v",
-                       DataType t = DataType::Int(32));
+                       DataType dtype = DataType::Int(32));
+  /*!
+   * \brief Constructor which provides a more detailed type annotation.
+   * \param name_hint variable name.
+   * \param type_annotation The type annotation.
+   */
+  TVM_DLL explicit Var(std::string name_hint, Type type_annotation);
   /*!
    * \brief Make a new copy of var with same type, append suffix
    * \param suffix The suffix to be appended.
    * \return the new Var copy
    */
-  Var copy_with_suffix(const std::string& suffix) const {
-    return Var((*this)->name_hint + suffix, (*this)->dtype);
-  }
+  TVM_DLL Var copy_with_suffix(const std::string& suffix) const;
   /*!
    * \brief Get pointer to the internal value.
    * \return the corresponding Variable.
@@ -116,15 +132,7 @@ class Var : public PrimExpr {
  */
 class SizeVarNode : public VarNode {
  public:
-  /*! \brief constructor */
-  SizeVarNode() {}
-  /*! \brief constructor
-   * \param dtype data type
-   * \param name_hint variable name
-   */
-  SizeVarNode(DataType dtype, std::string name_hint);
-
-  static constexpr const char* _type_key = "SizeVar";
+  static constexpr const char* _type_key = "tir.SizeVar";
   TVM_DECLARE_FINAL_OBJECT_INFO(SizeVarNode, VarNode);
 };
 
@@ -132,12 +140,13 @@ class SizeVarNode : public VarNode {
 class SizeVar : public Var {
  public:
   explicit SizeVar(ObjectPtr<Object> n) : Var(n) {}
-  /*! \brief constructor
+  /*!
+   * \brief constructor
    * \param name_hint variable name
    * \param t data type
    */
   TVM_DLL explicit SizeVar(std::string name_hint = "s",
-                            DataType t = DataType::Int(32));
+                           DataType t = DataType::Int(32));
   /*!
    * \brief Get pointer to the internal value.
    * \return the corresponding Variable.
@@ -285,11 +294,20 @@ class IterVarNode : public Object {
     v->Visit("thread_tag", &thread_tag);
   }
 
+  bool SEqualReduce(const IterVarNode* other, SEqualReducer equal) const {
+    return
+        equal(dom, other->dom) &&
+        equal.DefEqual(var, other->var) &&
+        equal(iter_type, other->iter_type) &&
+        equal(thread_tag, other->thread_tag);
+  }
+
   TVM_DLL static IterVar make(Range dom, Var var,
                               IterVarType iter_type,
                               std::string thread_tag = "");
 
   static constexpr const char* _type_key = "IterVar";
+  static constexpr const bool _type_has_method_sequal_reduce = true;
   TVM_DECLARE_FINAL_OBJECT_INFO(IterVarNode, Object);
 };
 
@@ -331,6 +349,10 @@ class StringImmNode : public PrimExprNode {
     v->Visit("value", &value);
   }
 
+  bool SEqualReduce(const StringImmNode* other, SEqualReducer equal) const {
+    return equal(value, other->value);
+  }
+
   TVM_DLL PrimExpr static make(std::string value);
 
   static constexpr const char* _type_key = "StringImm";
@@ -356,6 +378,10 @@ class CastNode : public PrimExprNode {
     v->Visit("value", &value);
   }
 
+  bool SEqualReduce(const CastNode* other, SEqualReducer equal) const {
+    return equal(dtype, other->dtype) && equal(value, other->value);
+  }
+
   TVM_DLL static PrimExpr make(DataType t, PrimExpr v);
 
   static constexpr const char* _type_key = "Cast";
@@ -378,6 +404,13 @@ class BinaryOpNode : public PrimExprNode {
     v->Visit("dtype", &(this->dtype));
     v->Visit("a", &a);
     v->Visit("b", &b);
+  }
+
+  bool SEqualReduce(const T* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal(a, other->a) &&
+        equal(b, other->b);
   }
 
   static PrimExpr make(PrimExpr a, PrimExpr b) {
@@ -472,6 +505,13 @@ class CmpOpNode : public PrimExprNode {
     v->Visit("b", &b);
   }
 
+  bool SEqualReduce(const T* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal(a, other->a) &&
+        equal(b, other->b);
+  }
+
   static PrimExpr make(PrimExpr a, PrimExpr b) {
     CHECK(a.defined()) << "ValueError: a is undefined\n";
     CHECK(b.defined()) << "ValueError: b is undefined\n";
@@ -536,6 +576,13 @@ class AndNode : public PrimExprNode {
     v->Visit("b", &b);
   }
 
+  bool SEqualReduce(const AndNode* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal(a, other->a) &&
+        equal(b, other->b);
+  }
+
   TVM_DLL static PrimExpr make(PrimExpr a, PrimExpr b);
 
   static constexpr const char* _type_key = "And";
@@ -556,6 +603,13 @@ class OrNode : public PrimExprNode {
     v->Visit("b", &b);
   }
 
+  bool SEqualReduce(const OrNode* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal(a, other->a) &&
+        equal(b, other->b);
+  }
+
   TVM_DLL static PrimExpr make(PrimExpr a, PrimExpr b);
 
   static constexpr const char* _type_key = "Or";
@@ -571,6 +625,10 @@ class NotNode : public PrimExprNode {
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("dtype", &dtype);
     v->Visit("a", &a);
+  }
+
+  bool SEqualReduce(const NotNode* other, SEqualReducer equal) const {
+    return equal(dtype, other->dtype) && equal(a, other->a);
   }
 
   TVM_DLL static PrimExpr make(PrimExpr a);
@@ -600,6 +658,14 @@ class SelectNode : public PrimExprNode {
     v->Visit("condition", &condition);
     v->Visit("true_value", &true_value);
     v->Visit("false_value", &false_value);
+  }
+
+  bool SEqualReduce(const SelectNode* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal(condition, other->condition) &&
+        equal(true_value, other->true_value) &&
+        equal(false_value, other->false_value);
   }
 
   TVM_DLL static PrimExpr make(PrimExpr condition, PrimExpr true_value, PrimExpr false_value);
@@ -639,6 +705,14 @@ class LoadNode : public PrimExprNode {
     v->Visit("predicate", &predicate);
   }
 
+  bool SEqualReduce(const LoadNode* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal(buffer_var, other->buffer_var) &&
+        equal(index, other->index) &&
+        equal(predicate, other->predicate);
+  }
+
   TVM_DLL static PrimExpr make(DataType dtype, Var buffer_var, PrimExpr index, PrimExpr predicate);
 
   static constexpr const char* _type_key = "Load";
@@ -670,6 +744,14 @@ class RampNode : public PrimExprNode {
     v->Visit("lanes", &lanes);
   }
 
+  bool SEqualReduce(const RampNode* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal(base, other->base) &&
+        equal(stride, other->stride) &&
+        equal(lanes, other->lanes);
+  }
+
   TVM_DLL static PrimExpr make(PrimExpr base, PrimExpr stride, int lanes);
 
   static constexpr const char* _type_key = "Ramp";
@@ -688,6 +770,13 @@ class BroadcastNode : public PrimExprNode {
     v->Visit("dtype", &dtype);
     v->Visit("value", &value);
     v->Visit("lanes", &lanes);
+  }
+
+  bool SEqualReduce(const BroadcastNode* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal(value, other->value) &&
+        equal(lanes, other->lanes);
   }
 
   TVM_DLL static PrimExpr make(PrimExpr value, int lanes);
@@ -713,6 +802,14 @@ class LetNode : public PrimExprNode {
     v->Visit("var", &var);
     v->Visit("value", &value);
     v->Visit("body", &body);
+  }
+
+  bool SEqualReduce(const LetNode* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal.DefEqual(var, other->var) &&
+        equal(value, other->value) &&
+        equal(body, other->body);
   }
 
   TVM_DLL static PrimExpr make(Var var, PrimExpr value, PrimExpr body);
@@ -785,12 +882,22 @@ class CallNode : public PrimExprNode {
     v->Visit("value_index", &value_index);
   }
 
+  bool SEqualReduce(const CallNode* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal(name, other->name) &&
+        equal(args, other->args) &&
+        equal(call_type, other->call_type) &&
+        equal(func, other->func) &&
+        equal(value_index, other->value_index);
+  }
+
   TVM_DLL static PrimExpr make(DataType dtype,
-                           std::string name,
-                           Array<PrimExpr> args,
-                           CallType call_type,
-                           FunctionRef func = FunctionRef(),
-                           int value_index = 0);
+                               std::string name,
+                               Array<PrimExpr> args,
+                               CallType call_type,
+                               FunctionRef func = FunctionRef(),
+                               int value_index = 0);
 
   /*! \return Whether call node is pure. */
   bool is_pure() const {
@@ -829,6 +936,8 @@ class CallNode : public PrimExprNode {
   static constexpr const char* glsl_texture_store = "glsl_texture_store";
   static constexpr const char* prefetch = "prefetch";
   static constexpr const char* isnan = "isnan";
+  static constexpr const char* isfinite = "isfinite";
+  static constexpr const char* isinf = "isinf";
 
   /*! \brief Vectorizable intrinsic list. */
   static const char* vectorizable_intrinsics[];
@@ -849,6 +958,13 @@ class ShuffleNode : public PrimExprNode {
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("vectors", &vectors);
     v->Visit("indices", &indices);
+  }
+
+  bool SEqualReduce(const ShuffleNode* other, SEqualReducer equal) const {
+    return
+        equal(dtype, other->dtype) &&
+        equal(vectors, other->vectors) &&
+        equal(indices, other->indices);
   }
 
   TVM_DLL static PrimExpr make(Array<PrimExpr> vectors, Array<PrimExpr> indices);
@@ -913,7 +1029,16 @@ class CommReducerNode : public Object {
     v->Visit("identity_element", &identity_element);
   }
 
+  bool SEqualReduce(const CommReducerNode* other, SEqualReducer equal) const {
+    return
+        equal.DefEqual(lhs, other->lhs) &&
+        equal.DefEqual(rhs, other->rhs) &&
+        equal(result, other->result) &&
+        equal(identity_element, other->identity_element);
+  }
+
   static constexpr const char* _type_key = "CommReducer";
+  static constexpr const bool _type_has_method_sequal_reduce = true;
   TVM_DECLARE_FINAL_OBJECT_INFO(CommReducerNode, Object);
 };
 
@@ -943,10 +1068,10 @@ class ReduceNode : public PrimExprNode {
 
   /*! \brief construct expr from op and rdom */
   TVM_DLL static PrimExpr make(CommReducer combiner,
-                           Array<PrimExpr> src,
-                           Array<IterVar> rdom,
-                           PrimExpr condition,
-                           int value_index);
+                               Array<PrimExpr> src,
+                               Array<IterVar> rdom,
+                               PrimExpr condition,
+                               int value_index);
 
   void VisitAttrs(AttrVisitor* v) {
     v->Visit("dtype", &dtype);
@@ -957,6 +1082,16 @@ class ReduceNode : public PrimExprNode {
     v->Visit("value_index", &value_index);
   }
 
+  bool SEqualReduce(const ReduceNode* other, SEqualReducer equal) const {
+    // check axis first so IterVars can define the necessary variables.
+    return
+        equal(dtype, other->dtype) &&
+        equal(axis, other->axis) &&
+        equal(combiner, other->combiner) &&
+        equal(source, other->source) &&
+        equal(condition, other->condition) &&
+        equal(value_index, other->value_index);
+  }
   static constexpr const char* _type_key = "Reduce";
   TVM_DECLARE_FINAL_OBJECT_INFO(ReduceNode, PrimExprNode);
 };
@@ -965,6 +1100,11 @@ class ReduceNode : public PrimExprNode {
 class AnyNode : public PrimExprNode {
  public:
   void VisitAttrs(AttrVisitor* v) {}
+
+  bool SEqualReduce(const AnyNode* other, SEqualReducer equal) const {
+    return true;
+  }
+
   /*! \brief Convert to var. */
   Var ToVar() const {
     return Var("any_dim", DataType::Int(32));
@@ -1260,6 +1400,18 @@ constexpr const char* tvm_load_matrix_sync = "tvm_load_matrix_sync";
  *  }
  */
 constexpr const char* tvm_mma_sync = "tvm_mma_sync";
+/*!
+ * \brief tvm intrinsic for tensor core bmma_sync operators.
+ *
+ *  void tvm_bmma_sync(Var fragment_d, Expr index_d,
+ *                     Var fragment_a, Expr index_a,
+ *                     Var fragment_b, Expr index_b,
+ *                     Var fragment_c, Expr index_c) {
+ *    nvcuda::wmma::bmma_sync(fragment_d[index_d], fragment_a[index_a],
+ *                           fragment_b[index_b], fragment_c[index_c]);
+ *  }
+ */
+constexpr const char* tvm_bmma_sync = "tvm_bmma_sync";
 /*!
  * \brief tvm intrinsic for tensor core fill_fragment operators.
  *

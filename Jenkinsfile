@@ -41,12 +41,11 @@
 
 // Hashtag in the source to build current CI docker builds
 //
-// - ci-cpu:v0.55: 07b45d958d4af91ec1bab66f6cf391d1ce12ddaf
 //
 
 ci_lint = "tvmai/ci-lint:v0.60"
 ci_gpu = "tvmai/ci-gpu:v0.61"
-ci_cpu = "tvmai/ci-cpu:v0.60"
+ci_cpu = "tvmai/ci-cpu:v0.61"
 ci_i386 = "tvmai/ci-i386:v0.52"
 
 // tvm libraries
@@ -220,6 +219,7 @@ stage('Build') {
           sh "${docker_run} ${ci_cpu} ./tests/scripts/task_python_vta_fsim.sh"
           sh "${docker_run} ${ci_cpu} ./tests/scripts/task_python_vta_tsim.sh"
           sh "${docker_run} ${ci_cpu} ./tests/scripts/task_golang.sh"
+          sh "${docker_run} ${ci_cpu} ./tests/scripts/task_rust.sh"
         }
       }
     }
@@ -256,6 +256,7 @@ stage('Unit Test') {
         init_git()
         unpack_lib('gpu', tvm_multilib)
         timeout(time: max_time, unit: 'MINUTES') {
+          sh "${docker_run} ${ci_gpu} ./tests/scripts/task_sphinx_precheck.sh"
           sh "${docker_run} ${ci_gpu} ./tests/scripts/task_python_unittest.sh"
           sh "${docker_run} ${ci_gpu} ./tests/scripts/task_python_integration.sh"
         }
@@ -348,6 +349,7 @@ stage('Deploy') {
       ws(per_exec_ws("tvm/deploy-docs")) {
         if (env.BRANCH_NAME == "master") {
            unpack_lib('mydocs', 'docs.tgz')
+           sh "cp docs.tgz /var/docs/docs.tgz"
            sh "tar xf docs.tgz -C /var/docs"
         }
       }

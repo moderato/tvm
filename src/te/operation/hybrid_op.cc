@@ -21,6 +21,7 @@
  * \brief Hybrid computation rule.
  * \file hybrid_op.cc
  */
+#include <tvm/runtime/registry.h>
 #include <tvm/te/operation.h>
 #include <tvm/arith/analyzer.h>
 #include <tvm/tir/expr.h>
@@ -82,6 +83,10 @@ Operation HybridOpNode::make(std::string name,
   Operation res = Operation(n);
   return res;
 }
+
+TVM_REGISTER_GLOBAL("te.HybridOp")
+.set_body_typed(HybridOpNode::make);
+
 
 Array<Tensor> HybridOpNode::InputTensors() const {
   // Because input tensors could be potentially inlined into hybrid scripts,
@@ -181,7 +186,8 @@ Stmt HybridOpNode::BuildProvide(
     const std::unordered_map<IterVar, Range> &dom_map,
     bool debug_keep_trivial_loop) const {
   CHECK_EQ(stage->op.operator->(), this);
-  Stmt ret = AttrStmtNode::make(make_zero(DataType::Int(32)), attr::extern_scope, 0, this->body);
+  Stmt ret = AttrStmtNode::make(
+      make_zero(DataType::Int(32)), tir::attr::extern_scope, 0, this->body);
   std::unordered_map<Tensor, Tensor> rmap;
   for (int i = 0; i < this->num_outputs(); ++i) {
     rmap[outputs[i]] = stage->op.output(i);

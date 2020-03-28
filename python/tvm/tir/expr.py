@@ -25,7 +25,7 @@ For example, you can use addexp.a to get the left operand of an Add node.
 
 .. code-block:: python
 
-  x = tvm.var("n")
+  x = te.var("n")
   y = x + 2
   assert(isinstance(y, tvm.tir.Add))
   assert(y.a == x)
@@ -169,7 +169,7 @@ class ExprOp(object):
 
     def __nonzero__(self):
         raise ValueError("Cannot use and / or / not operator to Expr, hint: " +
-                         "use tvm.all / tvm.any instead")
+                         "use tvm.tir.all / tvm.tir.any instead")
 
     def __bool__(self):
         return self.__nonzero__()
@@ -288,7 +288,7 @@ class CmpExpr(PrimExprWithOp):
 class LogicalExpr(PrimExprWithOp):
     pass
 
-@tvm._ffi.register_object("Variable")
+@tvm._ffi.register_object("tir.Var")
 class Var(PrimExprWithOp):
     """Symbolic variable.
 
@@ -297,7 +297,7 @@ class Var(PrimExprWithOp):
     name : str
         The name
 
-    dtype : str
+    dtype : Union[str, tvm.irType]
         The data type
     """
     def __init__(self, name, dtype):
@@ -305,7 +305,7 @@ class Var(PrimExprWithOp):
             _ffi_api.Var, name, dtype)
 
 
-@tvm._ffi.register_object
+@tvm._ffi.register_object("tir.SizeVar")
 class SizeVar(Var):
     """Symbolic variable to represent a tensor index size
        which is greater or equal to zero.
@@ -346,8 +346,8 @@ class IterVar(Object, ExprOp):
 
     See Also
     --------
-    tvm.thread_axis: Create thread axis IterVar.
-    tvm.reduce_axis: Create reduce axis IterVar.
+    te.thread_axis: Create thread axis IterVar.
+    te.reduce_axis: Create reduce axis IterVar.
     """
     DataPar = 0
     ThreadIndex = 1
@@ -812,7 +812,7 @@ class Select(PrimExprWithOp):
     Note
     ----
     Select may compute both true_value and false_value.
-    Use :any:`tvm.if_then_else` instead if you want to
+    Use :py:class:`tvm.tir.if_then_else` instead if you want to
     get a conditional expression that only evaluates
     the correct branch.
 
@@ -964,3 +964,11 @@ class Let(PrimExprWithOp):
     def __init__(self, var, value, body):
         self.__init_handle_by_constructor__(
             _ffi_api.Let, var, value, body)
+
+
+@tvm._ffi.register_object
+class Any(PrimExpr):
+    """Any node.
+    """
+    def __init__(self):
+        self.__init_handle_by_constructor__(_ffi_api.Any)

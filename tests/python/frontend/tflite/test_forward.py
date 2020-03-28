@@ -24,14 +24,19 @@ from __future__ import print_function
 from functools import partial
 import numpy as np
 import tvm
+from tvm import te
 from tvm import relay
-import tensorflow as tf
+try:
+    import tensorflow.compat.v1 as tf
+except ImportError:
+    import tensorflow as tf
 from tensorflow.python.framework import constant_op
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import gen_array_ops
+from tensorflow.python.ops import nn_impl
 from tensorflow.python.ops import variables
 try:
     from tensorflow import lite as interpreter_wrapper
@@ -55,8 +60,8 @@ def convert_to_list(x):
 
 
 #######################################################################
-# Get a real image for e2e testing.
-# --------------------------------------
+# Get a real image for e2e testing
+# --------------------------------
 def get_real_image(im_height, im_width):
     repo_base = 'https://github.com/dmlc/web-data/raw/master/tensorflow/models/InceptionV1/'
     img_name = 'elephant-299.jpg'
@@ -154,7 +159,7 @@ def compare_tflite_with_tvm(in_data, in_name, input_tensors,
         if init_global_variables:
             sess.run(variables.global_variables_initializer())
         # convert to tflite model
-        converter = interpreter_wrapper.TFLiteConverter.from_session(
+        converter = tf.lite.TFLiteConverter.from_session(
             sess, input_tensors, output_tensors)
 
         if quantized:
@@ -297,7 +302,7 @@ def test_forward_transpose():
 
 #######################################################################
 # Cast
-# --------
+# ----
 
 def _test_cast(data, cast_dtype):
     """ One iteration of CAST """
@@ -314,8 +319,8 @@ def test_forward_cast():
     _test_cast(np.arange(6.0, dtype=np.int32).reshape((1, 6)), cast_dtype=tf.int64)
 
 #######################################################################
-# tile
-# ---------
+# Tile
+# ----
 
 
 def _test_forward_tile(in_shape, reps, dtype):
@@ -669,7 +674,7 @@ def _test_unary_elemwise(math_op, data):
     with tf.Graph().as_default():
         in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype, name='in')
         out = math_op(in_data)
-        compare_tflite_with_tvm(data, ['in:0'], in_data, [out])
+        compare_tflite_with_tvm(data, ['in:0'], [in_data], [out])
 
 #######################################################################
 # Abs
@@ -692,6 +697,15 @@ def _test_ceil(data):
 def _test_floor(data):
     """ One iteration of floor """
     return _test_unary_elemwise(math_ops.floor, data)
+
+#######################################################################
+# Round
+# -----
+
+def _test_round(data):
+    """ One iteration of round """
+    return _test_unary_elemwise(math_ops.round, data)
+
 #######################################################################
 # Exp
 # ---
@@ -721,6 +735,13 @@ def _test_cos(data):
     """ One iteration of cos """
     return _test_unary_elemwise(math_ops.cos, data)
 #######################################################################
+# Tan
+# ---
+
+def _test_tan(data):
+    """ One iteration of tan """
+    return _test_unary_elemwise(math_ops.tan, data)
+#######################################################################
 # Sqrt
 # ----
 
@@ -742,30 +763,49 @@ def _test_neg(data):
     """ One iteration of neg """
     return _test_unary_elemwise(math_ops.neg, data)
 #######################################################################
+# Square
+# ------
+
+def _test_square(data):
+    """ One iteration of square """
+    return _test_unary_elemwise(math_ops.square, data)
+
+#######################################################################
+# Elu
+# ---
+
+def _test_elu(data):
+    """ One iteration of elu """
+    return _test_unary_elemwise(nn_ops.elu, data)
 
 def _test_forward_unary_elemwise(test_op):
     # functions that need positive input
-    if test_op in {'_test_log', '_test_sqrt', '_test_rsqrt'}:
-        test_op(np.arange(6.0, dtype=np.float32).reshape((2, 1, 3)))
-        test_op(np.arange(6.0, dtype=np.int32).reshape((2, 1, 3)))
+    if test_op.__name__ in {'_test_log', '_test_sqrt', '_test_rsqrt'}:
+        test_op(np.arange(1.0, 7.0, dtype=np.float32).reshape((2, 1, 3)))
     else:
-        np.array(np.random.uniform(-5, 5, (3, 1)), dtype=np.int32)
+        test_op(np.random.uniform(-10, 10, (3, 2)).astype(np.float32))
 
 def test_all_unary_elemwise():
     _test_forward_unary_elemwise(_test_abs)
-    _test_forward_unary_elemwise(_test_ceil)
     _test_forward_unary_elemwise(_test_floor)
     _test_forward_unary_elemwise(_test_exp)
     _test_forward_unary_elemwise(_test_log)
     _test_forward_unary_elemwise(_test_sin)
-    _test_forward_unary_elemwise(_test_cos)
     _test_forward_unary_elemwise(_test_sqrt)
     _test_forward_unary_elemwise(_test_rsqrt)
     _test_forward_unary_elemwise(_test_neg)
+    _test_forward_unary_elemwise(_test_square)
+    # ceil and cos come with TFLite 1.14.0.post1 fbs schema
+    if package_version.parse(tf.VERSION) >= package_version.parse('1.14.0'):
+        _test_forward_unary_elemwise(_test_ceil)
+        _test_forward_unary_elemwise(_test_cos)
+        _test_forward_unary_elemwise(_test_round)
+        _test_forward_unary_elemwise(_test_tan)
+        _test_forward_unary_elemwise(_test_elu)
 
 #######################################################################
 # Element-wise
-# ---
+# ------------
 
 def _test_elemwise(math_op, data, fused_activation_function=None, quantized=False, qnn_op=None):
     """ One iteration of elemwise """
@@ -933,6 +973,22 @@ def _test_squared_difference(data):
     """ One iteration of squared difference """
     return _test_elemwise(math_ops.squared_difference, data)
 
+#######################################################################
+# Floor_divide
+# ------------
+
+def _test_floor_divide(data):
+    """ One iteration of floor_div"""
+    return _test_elemwise(math_ops.floordiv, data)
+
+#######################################################################
+# Floor_mod
+# ---------
+
+def _test_floor_mod(data):
+    """ One iteration of floor_mod"""
+    return _test_elemwise(math_ops.floormod, data)
+
 def _test_forward_elemwise(testop):
     """ Elewise"""
     testop([np.arange(6.0, dtype=np.float32).reshape((2, 1, 1, 3)),
@@ -981,6 +1037,9 @@ def test_all_elemwise():
     _test_forward_elemwise(_test_less_equal)
     _test_forward_elemwise(_test_equal)
     _test_forward_elemwise(_test_not_equal)
+    if package_version.parse(tf.VERSION) >= package_version.parse('1.14.0'):
+        _test_forward_elemwise(_test_floor_divide)
+        _test_forward_elemwise(_test_floor_mod)
 
 #######################################################################
 # Logical operators
@@ -1012,7 +1071,7 @@ def test_all_logical():
 
 #######################################################################
 # Zeros like
-# --------
+# ----------
 
 def _test_zeros_like(data):
     """ One iteration of ZEROS LIKE """
@@ -1098,11 +1157,24 @@ def _test_reduce_sum(data, keep_dims=None):
     """ One iteration of reduce_sum """
     return _test_reduce(math_ops.reduce_sum, data, keep_dims)
 
+#######################################################################
+# Reduce_any
+# ----------
 
-def _test_forward_reduce(testop):
+def _test_reduce_any(data, keep_dims=None):
+    """ One iteration of reduce_any """
+    return _test_reduce(math_ops.reduce_any, data, keep_dims)
+
+def _test_forward_reduce(testop, dtype="float32"):
     """ Reduce """
-    data0 = [np.random.rand(16, 16, 16, 16).astype("float32"), None]
-    data1 = [np.random.rand(16, 16, 16, 16).astype("float32"), np.array([1, 2], dtype=np.int32)]
+    if dtype == 'bool':
+        data0 = [np.random.choice(a=[False, True], size=(16, 16, 16, 16)).astype(dtype),
+                 None]
+        data1 = [np.random.choice(a=[False, True], size=(16, 16, 16, 16)).astype(dtype),
+                 np.array([1, 2], dtype=np.int32)]
+    else:
+        data0 = [np.random.rand(16, 16, 16, 16).astype(dtype), None]
+        data1 = [np.random.rand(16, 16, 16, 16).astype(dtype), np.array([1, 2], dtype=np.int32)]
     testop(data0)
     testop(data0, keep_dims=False)
     testop(data0, keep_dims=True)
@@ -1123,6 +1195,8 @@ def test_all_reduce():
     _test_forward_reduce_quantized(_test_reduce_mean)
     _test_forward_reduce(_test_reduce_prod)
     _test_forward_reduce(_test_reduce_sum)
+    if package_version.parse(tf.VERSION) >= package_version.parse('1.15.0'):
+        _test_forward_reduce(_test_reduce_any, dtype="bool")
 
 
 #######################################################################
@@ -1200,7 +1274,7 @@ def test_forward_pad():
 
 #######################################################################
 # Pack
-# -------------
+# ----
 
 def _test_pack(data, axis):
     """ One iteration of pack """
@@ -1254,6 +1328,44 @@ def test_forward_unpack():
         _test_unpack(np.array(np.random.uniform(0, 5, (3, 6)), dtype=np.int32), axis=-2, num_unpacks=3)
         _test_unpack(np.array(np.random.uniform(0, 5, (2, 3, 4)), dtype=np.int32), axis=-3, num_unpacks=2)
 
+
+#######################################################################
+# Local response normalization
+# ----------------------------
+
+def _test_local_response_normalization(data, depth_radius, bias, alpha, beta):
+    """ One iteration of LOCAL_RESPONSE_NORMALIZATION """
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype='float32', name='in_0')
+        out = nn_ops.local_response_normalization(in_data, depth_radius=depth_radius, bias=bias, alpha=alpha, beta=beta)
+        compare_tflite_with_tvm(data, 'in_0:0', [in_data], [out])
+
+def test_forward_local_response_normalization():
+    """ LOCAL_RESPONSE_NORMALIZATION """
+    data = np.random.uniform(size=(1, 6, 4, 3)).astype('float32')
+    # LOCAL_RESPONSE_NORMALIZATION come with TFLite >= 1.14.0 fbs schema
+    if package_version.parse(tf.VERSION) >= package_version.parse('1.14.0'):
+        _test_local_response_normalization(data, depth_radius=5, bias=1, alpha=1, beta=0.5)
+
+
+#######################################################################
+# L2 normalization
+# ----------------
+
+def _test_l2_normalization(data, axis, fused_activation_function=None):
+    """ One iteration of L2_NORMALIZATION """
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype)
+        out = nn_impl.l2_normalize(in_data, axis)
+        out = with_fused_activation_function(out, fused_activation_function)
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+def test_forward_l2_normalization():
+    """ L2_NORMALIZATION """
+    data = np.random.uniform(size=(3, 6, 4)).astype('float32')
+    _test_l2_normalization(data, axis=2)
+    _test_l2_normalization(data, axis=2, fused_activation_function="RELU")
+
 #######################################################################
 # Logistic
 # --------
@@ -1295,7 +1407,7 @@ def test_forward_softmax():
 
 #######################################################################
 # Tanh
-# --------
+# ----
 
 def _test_tanh(data):
     """ One iteration of TANH """
@@ -1310,7 +1422,7 @@ def test_forward_tanh():
 
 #######################################################################
 # ReLu
-# --------
+# ----
 
 def _test_relu(data):
     """ One iteration of ReLU """
@@ -1337,8 +1449,42 @@ def test_forward_prelu():
     _test_prelu(np.random.uniform(-5, 5, size=(1, 32, 32, 3)).astype("float32"), np.full((1, 1, 3), 0.2, dtype="float32"))
 
 #######################################################################
+# DepthToSpace
+# ------------
+
+def _test_depthtospace(data, block_size):
+    """ One iteration of depth_to_space operation with given data and block size """
+
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype)
+        out = array_ops.depth_to_space(in_data, block_size)
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+def test_forward_depthtospace():
+    # DEPTH_TO_SPACE comes with TFLite >= 1.15.0 fbs schema
+    if package_version.parse(tf.VERSION) >= package_version.parse('1.15.0'):
+        _test_depthtospace(np.random.normal(size=[1, 32, 32, 4]).astype("float32"), 2)
+        _test_depthtospace(np.random.normal(size=[1, 16, 8, 32]).astype("float32"), 4)
+
+#######################################################################
+# SpaceToDepth
+# ------------
+
+def _test_spacetodepth(data, block_size):
+    """ One iteration of space_to_depth operation with given data and block size """
+
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype)
+        out = array_ops.space_to_depth(in_data, block_size)
+        compare_tflite_with_tvm(data, 'Placeholder:0', [in_data], [out])
+
+def test_forward_spacetodepth():
+    _test_spacetodepth(np.random.normal(size=[1, 32, 32, 4]).astype("float32"), 2)
+    _test_spacetodepth(np.random.normal(size=[1, 16, 8, 32]).astype("float32"), 4)
+
+#######################################################################
 # Fully Connected
-# -------
+# ---------------
 
 def _test_fully_connected(tensor_in_sizes, filter_in_sizes, bias_in_size=None):
     """ One iteration of fully connected """
@@ -1463,7 +1609,7 @@ def test_forward_mobilenet_v2():
 
 #######################################################################
 # Inception
-# ------------
+# ---------
 
 def test_forward_inception_v3_net():
     """Test the Inception V3 TF Lite model."""
@@ -1629,6 +1775,8 @@ if __name__ == '__main__':
     test_all_resize()
     test_forward_squeeze()
     test_forward_slice()
+    test_forward_depthtospace()
+    test_forward_spacetodepth()
 
     # NN
     test_forward_convolution()
@@ -1640,6 +1788,8 @@ if __name__ == '__main__':
     test_forward_relu()
     test_forward_prelu()
     test_forward_fully_connected()
+    test_forward_l2_normalization()
+    test_forward_local_response_normalization()
 
     # Elemwise
     test_all_elemwise()

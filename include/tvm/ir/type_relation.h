@@ -50,7 +50,13 @@ class TypeCallNode : public TypeNode {
     v->Visit("span", &span);
   }
 
-  static constexpr const char* _type_key = "relay.TypeCall";
+  bool SEqualReduce(const TypeCallNode* other, SEqualReducer equal) const {
+    return
+        equal(func, other->func) &&
+        equal(args, other->args);
+  }
+
+  static constexpr const char* _type_key = "TypeCall";
   TVM_DECLARE_FINAL_OBJECT_INFO(TypeCallNode, TypeNode);
 };
 
@@ -119,7 +125,7 @@ class TypeReporterNode : public Object {
   // solver is not serializable.
   void VisitAttrs(AttrVisitor* v) {}
 
-  static constexpr const char* _type_key = "relay.TypeReporter";
+  static constexpr const char* _type_key = "TypeReporter";
   TVM_DECLARE_FINAL_OBJECT_INFO(TypeReporterNode, Object);
 };
 
@@ -195,7 +201,15 @@ class TypeRelationNode : public TypeConstraintNode {
     v->Visit("span", &span);
   }
 
-  static constexpr const char* _type_key = "relay.TypeRelation";
+  bool SEqualReduce(const TypeRelationNode* other, SEqualReducer equal) const {
+    return
+        equal(func, other->func) &&
+        equal(args, other->args) &&
+        equal(num_inputs, other->num_inputs) &&
+        equal(attrs, other->attrs);
+  }
+
+  static constexpr const char* _type_key = "TypeRelation";
   TVM_DECLARE_FINAL_OBJECT_INFO(TypeRelationNode, TypeConstraintNode);
 };
 

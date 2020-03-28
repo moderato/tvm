@@ -43,13 +43,11 @@ inline std::string GenerateName(const Function& func) {
 }
 
 bool IsClosure(const Function& func) {
-  ObjectRef res = FunctionGetAttr(func, attr::kClosure);
-  const tir::IntImmNode* pval = res.as<tir::IntImmNode>();
-  return pval && pval->value != 0;
+  return func->GetAttr<Integer>(attr::kClosure, 0)->value != 0;
 }
 
-Function MarkClosure(const Function& func) {
-  return FunctionSetAttr(func, attr::kClosure, tvm::Integer(1));
+Function MarkClosure(Function func) {
+  return WithAttr(std::move(func), attr::kClosure, tvm::Integer(1));
 }
 
 /* The goal of this class is to lift out any nested functions into top-level
@@ -65,7 +63,7 @@ class LambdaLifter : public ExprMutator {
   Expr VisitExpr_(const LetNode* let_node) final {
     bool is_lambda = false;
     if (auto func = let_node->value.as<FunctionNode>()) {
-      if (!func->IsPrimitive()) {
+      if (!func->HasNonzeroAttr(attr::kPrimitive)) {
         is_lambda = true;
         letrec_.push_back(let_node->var);
       }
@@ -75,7 +73,7 @@ class LambdaLifter : public ExprMutator {
       letrec_.pop_back();
     }
     auto body = VisitExpr(let_node->body);
-    return LetNode::make(let_node->var, value, body);
+    return Let(let_node->var, value, body);
   }
 
   Expr VisitExpr_(const CallNode* call_node) final {
@@ -85,7 +83,7 @@ class LambdaLifter : public ExprMutator {
       if (!letrec_.empty() && var == letrec_.back()) {
         auto it = lambda_map_.find(var);
         CHECK(it != lambda_map_.end());
-        return CallNode::make(it->second, call->args, call_node->attrs,
+        return Call(it->second, call->args, call_node->attrs,
                               call_node->type_args);
       }
     }
@@ -96,7 +94,7 @@ class LambdaLifter : public ExprMutator {
     auto func = GetRef<Function>(func_node);
 
     // We should not transform primitive functions.
-    if (func->IsPrimitive()) {
+    if (func->HasNonzeroAttr(attr::kPrimitive)) {
       return std::move(func);
     }
 
@@ -120,7 +118,7 @@ class LambdaLifter : public ExprMutator {
         for (auto fv : captured_vars) {
           fvs.push_back(fv);
         }
-        lambda_map_.emplace(letrec_.back(), CallNode::make(global, fvs));
+        lambda_map_.emplace(letrec_.back(), Call(global, fvs));
       } else {
         lambda_map_.emplace(letrec_.back(), global);
       }
@@ -151,10 +149,10 @@ class LambdaLifter : public ExprMutator {
     // code for the closure.
     Function lifted_func;
     if (captured_vars.size() == 0 && free_type_vars.size() == 0) {
-      lifted_func = FunctionNode::make(body->params, body->body, body->ret_type, body->type_params);
+      lifted_func = Function(body->params, body->body, body->ret_type, body->type_params);
     } else {
       lifted_func =
-          FunctionNode::make(captured_vars, body, func->func_type_annotation(), free_type_vars);
+          Function(captured_vars, body, func->func_type_annotation(), free_type_vars);
       lifted_func = MarkClosure(lifted_func);
     }
 
@@ -180,7 +178,7 @@ class LambdaLifter : public ExprMutator {
       for (auto fv : captured_vars) {
         fvs.push_back(fv);
       }
-      return CallNode::make(global, fvs);
+      return Call(global, fvs);
     }
   }
 
@@ -189,12 +187,13 @@ class LambdaLifter : public ExprMutator {
     auto glob_funcs = module_->functions;
     for (auto pair : glob_funcs) {
       if (auto* n = pair.second.as<FunctionNode>()) {
+        if (n->GetAttr<tir::StringImm>(attr::kCompiler).defined()) continue;
         auto func = GetRef<Function>(n);
-        func = FunctionNode::make(func->params,
-                                  VisitExpr(func->body),
-                                  func->ret_type,
-                                  func->type_params,
-                                  func->attrs);
+        func = Function(func->params,
+                        VisitExpr(func->body),
+                        func->ret_type,
+                        func->type_params,
+                        func->attrs);
         module_->Add(pair.first, func, true);
       }
     }

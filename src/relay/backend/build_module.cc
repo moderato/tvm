@@ -28,8 +28,10 @@
 #include <tvm/relay/expr.h>
 #include <tvm/relay/transform.h>
 #include <tvm/relay/qnn/transform.h>
+#include <tvm/tir/ir_pass.h>
 #include <memory>
 
+#include "../../target/source/codegen_source_base.h"
 #include "utils.h"
 
 namespace tvm {
@@ -208,7 +210,7 @@ class RelayBuildModule : public runtime::ModuleNode {
   Map<std::string, Constant> GetParams() {
     Map<std::string, Constant> ret;
     for (const auto& kv : ret_.params) {
-      ret.Set(kv.first, ConstantNode::make(kv.second));
+      ret.Set(kv.first, Constant(kv.second));
     }
     return ret;
   }
@@ -233,42 +235,46 @@ class RelayBuildModule : public runtime::ModuleNode {
   }
 
   /*!
-   * \brief Build relay function for graph runtime
+   * \brief Build relay IRModule for graph runtime
    *
-   * \param func Relay Function
+   * \param mod Relay IRModule
    * \param target Target device
    * \param target_host Host target device
    */
-  void Build(Function func,
+  void Build(IRModule mod,
              const TargetsMap& targets,
              const tvm::Target& target_host) {
     targets_ = targets;
     target_host_ = target_host;
-    BuildRelay(func, params_);
+    BuildRelay(mod, params_);
   }
 
  protected:
   /*!
-   * \brief Optimize a Relay Function.
+   * \brief Optimize a Relay IRModule.
    *
-   * \param func The input Function where optmization will be applied on.
+   * \param relay_module The input IRModule where optmization will be applied on.
    * \param targets The device type to `Target` mapping.
    * \param params The param name to value mapping.
    *
-   * \return relay::Module The updated Relay module after optimization.
+   * \return relay::IRModule The updated Relay IR module after optimization.
    */
   IRModule Optimize(
-      Function func,
+      IRModule relay_module,
       const TargetsMap& targets,
       const std::unordered_map<std::string, runtime::NDArray>& params) {
     if (params.size()) {
-      func = BindParamsByName(func, params);
+      CHECK(relay_module->ContainGlobalVar("main"))
+        << "Missing the main entry function";
+      GlobalVar main_glb_var = relay_module->GetGlobalVar("main");
+      Function main_func = Downcast<Function>(relay_module->Lookup(main_glb_var));
+      auto new_main = BindParamsByName(main_func, params);
+      relay_module->Update(main_glb_var, new_main);
     }
 
-    // Perform Module->Module optimizations.
-    IRModule relay_module = IRModule::FromExpr(func);
-
     Array<Pass> pass_seqs;
+    Array<tvm::PrimExpr> entry_functions{tvm::PrimExpr{"main"}};
+    pass_seqs.push_back(transform::RemoveUnusedFunctions(entry_functions));
 
     // Run all dialect legalization passes.
     pass_seqs.push_back(relay::qnn::transform::Legalize());
@@ -305,6 +311,9 @@ class RelayBuildModule : public runtime::ModuleNode {
     if (targets.size() == 1) {
       pass_seqs.push_back(transform::AlterOpLayout());
     }
+
+    // Fast math optimizations.
+    pass_seqs.push_back(transform::FastMath());
     pass_seqs.push_back(transform::FoldConstant());
 
     // Create a sequential pass and perform optimizations.
@@ -327,6 +336,13 @@ class RelayBuildModule : public runtime::ModuleNode {
     // Fuse the operations if it is needed.
     relay_module = transform::FuseOps()(relay_module);
     relay_module = transform::InferType()(relay_module);
+    // Inline the functions that have been lifted by the module scope.
+    //
+    // TODO(@zhiics) Note that we need to be careful about the subgraphs with
+    // global function calls. We should make sure that these callees are also
+    // inline functions. However, this should be very unlikely for accelerators
+    // and vendor-provided libraries. So we don't handle for now.
+    relay_module = transform::Inline()(relay_module);
     CHECK(relay_module.defined());
 
     return relay_module;
@@ -415,18 +431,18 @@ class RelayBuildModule : public runtime::ModuleNode {
   }
 
   /*!
-   * \brief Compile a Relay function to runtime module.
+   * \brief Compile a Relay IR module to runtime module.
    *
-   * \param func The Relay function.
+   * \param relay_module The Relay IR module.
    * \param params The parameters.
    */
   void BuildRelay(
-      Function func,
+      IRModule relay_module,
       const std::unordered_map<std::string, tvm::runtime::NDArray>& params) {
-    // Optimize input Relay Function and returns Relay Module
-    IRModule relay_module = Optimize(func, targets_, params);
+    // Relay IRModule -> IRModule optimizations.
+    relay_module = Optimize(relay_module, targets_, params);
     // Get the updated function.
-    func = Downcast<Function>(relay_module->Lookup("main"));
+    auto func = Downcast<Function>(relay_module->Lookup("main"));
 
     // Generate code for the updated function.
     graph_codegen_ = std::unique_ptr<GraphCodegen>(new GraphCodegen());
@@ -437,28 +453,51 @@ class RelayBuildModule : public runtime::ModuleNode {
     ret_.params = graph_codegen_->GetParams();
 
     auto lowered_funcs = graph_codegen_->GetLoweredFunc();
+
+    // When there is no lowered_funcs due to reasons such as optimization.
     if (lowered_funcs.size() == 0) {
-      LOG(WARNING) << "no lowered funcs exist in the compiled module";
+      Target target_host = GetTargetHost();
+
+      // If no target_host has been set, we choose a default one, which is
+      // llvm if "codegen.LLVMModuleCreate" is accessible.
+      const runtime::PackedFunc* pf = runtime::Registry::Get("codegen.LLVMModuleCreate");
+      if (!target_host.defined())
+        target_host = (pf != nullptr) ? target::llvm() : target::stackvm();
+
+      if (target_host.defined() && target_host->target_name == "llvm") {
+        // If we can decide the target is LLVM, we then create an empty LLVM module.
+        ret_.mod = (*pf)(target_host->str(), "empty_module");
+      } else {
+        // If we cannot decide the target is LLVM, we create an empty CSourceModule.
+        // The code content is initialized with ";" to prevent complaining
+        // from CSourceModuleNode::SaveToFile.
+        ret_.mod = tvm::codegen::CSourceModuleCreate(";", "");
+      }
     } else {
       ret_.mod = tvm::build(
         lowered_funcs,
         target_host_,
         BuildConfig::Current());
     }
+
     Array<tvm::runtime::Module> ext_mods = graph_codegen_->GetExternalModules();
-    if (!ext_mods.empty()) {
-      CHECK(lowered_funcs.size() > 0 || ext_mods.size() == 1)
-          << "Expect to have a TVM DSOModule when multiple external runtime modules exist";
-      if (lowered_funcs.size() == 0) {
-        // Execute the whole module using external runtime.
-        ret_.mod = ext_mods[0];
-      } else {
-        // Import all external runtime modules.
-        for (const auto& it : ext_mods) {
-          ret_.mod.Import(it);
+    // Import all external runtime modules.
+    for (const auto& it : ext_mods)
+      ret_.mod.Import(it);
+  }
+
+ private:
+  Target GetTargetHost() {
+    Target target_host = target_host_;
+    if (!target_host_.defined()) {
+      for (const auto &it : targets_) {
+        if (it.second->device_type == kDLCPU) {
+          target_host = it.second;
+          break;
         }
       }
     }
+    return target_host;
   }
 
  protected:

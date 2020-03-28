@@ -27,29 +27,12 @@
 #include <tvm/relay/attrs/nn.h>
 #include <vector>
 
-#include "../../pass/infer_layout_util.h"
+#include "../../transforms/infer_layout_util.h"
 #include "../op_common.h"
 #include "convolution.h"
 
 namespace tvm {
 namespace relay {
-
-
-template<typename T>
-Array<Array<Layout> > ConvInferCorrectLayout(
-    const Attrs& attrs,
-    const Array<Layout>& new_in_layouts,
-    const Array<Layout>& old_in_layouts,
-    const Array<Array<IndexExpr>> &old_in_shapes) {
-  const T* params = attrs.as<T>();
-
-  // We always make other operators to fit the layouts of convolution layers
-  // So this inference ignores all inputs
-  return Array<Array<Layout> >{{params->data_layout, params->kernel_layout},
-                               {params->out_layout == "" ?
-                                   params->data_layout : params->out_layout}};
-}
-
 
 template <typename T>
 Expr MakeConv(Expr data,
@@ -77,7 +60,7 @@ Expr MakeConv(Expr data,
   attrs->out_layout = std::move(out_layout);
   attrs->out_dtype = std::move(out_dtype);
   static const Op& op = Op::Get(op_name);
-  return CallNode::make(op, {data, weight}, Attrs(attrs), {});
+  return Call(op, {data, weight}, Attrs(attrs), {});
 }
 
 
@@ -235,18 +218,18 @@ bool Conv2DTransposeRel(const Array<Type>& types,
   const Layout in_layout(param->data_layout);
   const Layout kernel_layout(param->kernel_layout);
 
-  const auto trans_in_layout = BijectiveLayoutNode::make(in_layout, kNCHW);
+  const auto trans_in_layout = tir::BijectiveLayout(in_layout, kNCHW);
   CHECK(trans_in_layout.defined())
     << "Conv only support input layouts that are convertible from NCHW."
     << " But got " << in_layout;
 
-  const auto trans_kernel_layout = BijectiveLayoutNode::make(kernel_layout, kOIHW);
+  const auto trans_kernel_layout = tir::BijectiveLayout(kernel_layout, kOIHW);
   CHECK(trans_kernel_layout.defined())
     << "Conv only support kernel layouts that are convertible from OIHW."
     << " But got "<< kernel_layout;
 
   Layout out_layout(param->out_layout == "" ? param->data_layout : param->out_layout);
-  const auto trans_out_layout = BijectiveLayoutNode::make(out_layout, kNCHW);
+  const auto trans_out_layout = tir::BijectiveLayout(out_layout, kNCHW);
   CHECK(trans_out_layout.defined())
     << "Conv only support output layouts that are convertible from NCHW."
     << " But got " << out_layout;
@@ -341,7 +324,7 @@ Expr MakeConv2DTranspose(Expr data,
   attrs->out_layout = std::move(out_layout);
   attrs->out_dtype = std::move(out_dtype);
   static const Op& op = Op::Get("nn.conv2d_transpose");
-  return CallNode::make(op, {data, weight}, Attrs(attrs), {});
+  return Call(op, {data, weight}, Attrs(attrs), {});
 }
 
 
@@ -400,18 +383,18 @@ bool Conv1DTransposeRel(const Array<Type>& types,
   const Layout in_layout(param->data_layout);
   const Layout kernel_layout(param->kernel_layout);
 
-  const auto trans_in_layout = BijectiveLayoutNode::make(in_layout, kNCW);
+  const auto trans_in_layout = tir::BijectiveLayout(in_layout, kNCW);
   CHECK(trans_in_layout.defined())
     << "Conv only support input layouts that are convertible from NCW."
     << " But got " << in_layout;
 
-  const auto trans_kernel_layout = BijectiveLayoutNode::make(kernel_layout, kOIW);
+  const auto trans_kernel_layout = tir::BijectiveLayout(kernel_layout, kOIW);
   CHECK(trans_kernel_layout.defined())
     << "Conv only support kernel layouts that are convertible from OIW."
     << " But got "<< kernel_layout;
 
   Layout out_layout(param->out_layout == "" ? param->data_layout : param->out_layout);
-  const auto trans_out_layout = BijectiveLayoutNode::make(out_layout, kNCW);
+  const auto trans_out_layout = tir::BijectiveLayout(out_layout, kNCW);
   CHECK(trans_out_layout.defined())
     << "Conv only support output layouts that are convertible from NCW."
     << " But got " << out_layout;
@@ -500,7 +483,7 @@ Expr MakeConv1DTranspose(Expr data,
   attrs->out_layout = std::move(out_layout);
   attrs->out_dtype = std::move(out_dtype);
   static const Op& op = Op::Get("nn.conv1d_transpose");
-  return CallNode::make(op, {data, weight}, Attrs(attrs), {});
+  return Call(op, {data, weight}, Attrs(attrs), {});
 }
 
 
@@ -555,18 +538,18 @@ bool Conv2DWinogradRel(const Array<Type>& types,
   const Layout in_layout(param->data_layout);
   const Layout kernel_layout(param->kernel_layout);
 
-  const auto trans_in_layout = BijectiveLayoutNode::make(in_layout, kNCHW);
+  const auto trans_in_layout = tir::BijectiveLayout(in_layout, kNCHW);
   CHECK(trans_in_layout.defined())
     << "Conv only support input layouts that are convertible from NCHW."
     << " But got " << in_layout;
 
-  const auto trans_kernel_layout = BijectiveLayoutNode::make(kernel_layout, kOIHW);
+  const auto trans_kernel_layout = tir::BijectiveLayout(kernel_layout, kOIHW);
   CHECK(trans_kernel_layout.defined())
     << "Conv only support kernel layouts that are convertible from OIHW."
     << " But got "<< kernel_layout;
 
   Layout out_layout(param->out_layout == "" ? param->data_layout : param->out_layout);
-  const auto trans_out_layout = BijectiveLayoutNode::make(out_layout, kNCHW);
+  const auto trans_out_layout = tir::BijectiveLayout(out_layout, kNCHW);
   CHECK(trans_out_layout.defined())
       << "Conv only support output layouts that are convertible from NCHW."
       << " But got " << out_layout;
@@ -649,7 +632,7 @@ Expr MakeConv2DWinograd(Expr data,
   attrs->out_layout = std::move(out_layout);
   attrs->out_dtype = std::move(out_dtype);
   static const Op& op = Op::Get("nn.contrib_conv2d_winograd_without_weight_transform");
-  return CallNode::make(op, {data, weight}, Attrs(attrs), {});
+  return Call(op, {data, weight}, Attrs(attrs), {});
 }
 
 
@@ -712,7 +695,7 @@ Expr MakeConv2DWinogradWeightTransform(Expr weight,
   auto attrs = make_object<Conv2DWinogradWeightTransformAttrs>();
   attrs->tile_size = tile_size;
   static const Op& op = Op::Get("nn.contrib_conv2d_winograd_weight_transform");
-  return CallNode::make(op, {weight}, Attrs(attrs), {});
+  return Call(op, {weight}, Attrs(attrs), {});
 }
 
 
@@ -734,58 +717,6 @@ weight transformation in advance.
 .set_support_level(10)
 .add_type_rel("Conv2DWinogradWeightTransform", Conv2DWinogradWeightTransformRel);
 
-
-// Positional relay function to create conv2d winograd nnpack operator
-// used by frontend FFI.
-Expr MakeConv2DWinogradNNPACK(Expr data,
-                              Expr weight,
-                              Array<IndexExpr> strides,
-                              Array<IndexExpr> padding,
-                              Array<IndexExpr> dilation,
-                              int groups,
-                              IndexExpr channels,
-                              Array<IndexExpr> kernel_size,
-                              std::string data_layout,
-                              std::string kernel_layout,
-                              std::string out_layout,
-                              DataType out_dtype) {
-  auto attrs = make_object<Conv2DAttrs>();
-  attrs->strides = std::move(strides);
-  attrs->padding = std::move(padding);
-  attrs->dilation = std::move(dilation);
-  attrs->groups = groups;
-  attrs->channels = channels;
-  attrs->kernel_size = std::move(kernel_size);
-  attrs->data_layout = std::move(data_layout);
-  attrs->kernel_layout = std::move(kernel_layout);
-  attrs->out_layout = std::move(out_layout);
-  attrs->out_dtype = std::move(out_dtype);
-  static const Op& op = Op::Get("nn.contrib_conv2d_winograd_nnpack_without_weight_transform");
-  return CallNode::make(op, {data, weight}, Attrs(attrs), {});
-}
-
-TVM_REGISTER_GLOBAL("relay.op.nn._make.contrib_conv2d_winograd_nnpack_without_weight_transform")
-.set_body_typed(MakeConv2DWinogradNNPACK);
-
-RELAY_REGISTER_OP("nn.contrib_conv2d_winograd_nnpack_without_weight_transform")
-.describe(R"code(Compute conv2d with winograd nnpack. Only supports NCHW layout.
-              This operator assumes the weight tensor is already pre-transformed by
-              nn.contrib_conv2d_winograd_nnpack_weight_transform.
-
-- **data**: Input is 4D array of shape  (batch_size, in_channels, height, width)
-- **weight**: Any shape
-            We do not check the shape for this input tensor. Since different backend
-            has different layout strategy.
-
-- **out**:  Output is 4D array of shape (batch_size, channels, out_height, out_width)
-)code" TVM_ADD_FILELINE)
-.set_attrs_type<Conv2DAttrs>()
-.set_num_inputs(2)
-.add_argument("data", "Tensor", "The input tensor.")
-.add_argument("weight", "Tensor", "The weight tensor.")
-.set_support_level(10)
-.add_type_rel("Conv2DWinogradNNPACKRel", Conv2DWinogradRel<Conv2DAttrs>)
-.set_attr<FInferCorrectLayout>("FInferCorrectLayout", ConvInferCorrectLayout<Conv2DAttrs>);
 
 // relay.nn.contrib_conv2d_winograd_nnpack_weight_transform
 TVM_REGISTER_NODE_TYPE(Conv2DWinogradNNPACKWeightTransformAttrs);
@@ -828,7 +759,7 @@ Expr MakeConv2DWinogradNNPACKWeightTransform(Expr weight,
   attrs->convolution_algorithm = convolution_algorithm;
   attrs->out_dtype = std::move(out_dtype);
   static const Op& op = Op::Get("nn.contrib_conv2d_winograd_nnpack_weight_transform");
-  return CallNode::make(op, {weight}, Attrs(attrs), {});
+  return Call(op, {weight}, Attrs(attrs), {});
 }
 
 TVM_REGISTER_GLOBAL("relay.op.nn._make.contrib_conv2d_winograd_nnpack_weight_transform")
@@ -847,55 +778,6 @@ weight transformation in advance.
 .add_argument("weight", "Tensor", "The weight tensor.")
 .set_support_level(10)
 .add_type_rel("Conv2DWinogradNNPACKWeightTransform", Conv2DWinogradNNPACKWeightTransformRel);
-
-// Positional relay function to create conv2d NCHWc operator
-// used by frontend FFI.
-Expr MakeConv2DNCHWcInt8(Expr data,
-                         Expr kernel,
-                         Array<IndexExpr> strides,
-                         Array<IndexExpr> padding,
-                         Array<IndexExpr> dilation,
-                         int groups,
-                         IndexExpr channels,
-                         Array<IndexExpr> kernel_size,
-                         std::string data_layout,
-                         std::string kernel_layout,
-                         std::string out_layout,
-                         DataType out_dtype) {
-  auto attrs = make_object<Conv2DAttrs>();
-  attrs->strides = std::move(strides);
-  attrs->padding = std::move(padding);
-  attrs->dilation = std::move(dilation);
-  attrs->groups = groups;
-  attrs->channels = channels;
-  attrs->kernel_size = std::move(kernel_size);
-  attrs->data_layout = std::move(data_layout);
-  attrs->kernel_layout = std::move(kernel_layout);
-  attrs->out_layout = std::move(out_layout);
-  attrs->out_dtype = std::move(out_dtype);
-  static const Op& op = Op::Get("nn.contrib_conv2d_NCHWc_int8");
-  return CallNode::make(op, {data, kernel}, Attrs(attrs), {});
-}
-
-TVM_REGISTER_GLOBAL("relay.op.nn._make.contrib_conv2d_NCHWc_int8")
-.set_body_typed(MakeConv2DNCHWcInt8);
-
-
-RELAY_REGISTER_OP("nn.contrib_conv2d_NCHWc_int8")
-.describe(R"code(Compute conv2d with NCHWc data layout with int8 inputs.
-- **data**: Input is 5D packed tensor.
-- **weight**: 7D packed tensor.
-
-- **out**:  Output is 5D packed tensor
-)code" TVM_ADD_FILELINE)
-.set_attrs_type<Conv2DAttrs>()
-.set_num_inputs(2)
-.add_argument("data", "Tensor", "The input tensor.")
-.add_argument("weight", "Tensor", "The weight tensor.")
-.set_support_level(10)
-.add_type_rel("Conv2DNCHWcInt8", Conv2DWinogradRel<Conv2DAttrs>)
-.set_attr<FInferCorrectLayout>("FInferCorrectLayout",
-        ConvInferCorrectLayout<Conv2DAttrs>);
 
 // Positional relay function to create conv2d NCHWc operator
 // used by frontend FFI.
@@ -923,7 +805,7 @@ Expr MakeConv2DNCHWc(Expr data,
   attrs->out_layout = std::move(out_layout);
   attrs->out_dtype = std::move(out_dtype);
   static const Op& op = Op::Get("nn.contrib_conv2d_NCHWc");
-  return CallNode::make(op, {data, kernel}, Attrs(attrs), {});
+  return Call(op, {data, kernel}, Attrs(attrs), {});
 }
 
 TVM_REGISTER_GLOBAL("relay.op.nn._make.contrib_conv2d_NCHWc")
@@ -973,7 +855,7 @@ Expr MakeDepthwiseConv2DNCHWc(Expr data,
   attrs->out_layout = std::move(out_layout);
   attrs->out_dtype = std::move(out_dtype);
   static const Op& op = Op::Get("nn.contrib_depthwise_conv2d_NCHWc");
-  return CallNode::make(op, {data, kernel}, Attrs(attrs), {});
+  return Call(op, {data, kernel}, Attrs(attrs), {});
 }
 
 TVM_REGISTER_GLOBAL("relay.op.nn._make.contrib_depthwise_conv2d_NCHWc")
@@ -1135,12 +1017,11 @@ Expr MakeDeformableConv2D(Expr data,
   attrs->out_layout = out_layout;
   attrs->out_dtype = out_dtype;
   static const Op& op = Op::Get("nn.deformable_conv2d");
-  return CallNode::make(op, {data, offset, weight}, Attrs{attrs}, {});
+  return Call(op, {data, offset, weight}, Attrs{attrs}, {});
 }
 
 TVM_REGISTER_GLOBAL("relay.op.nn._make.deformable_conv2d")
 .set_body_typed(MakeDeformableConv2D);
-
 
 }  // namespace relay
 }  // namespace tvm

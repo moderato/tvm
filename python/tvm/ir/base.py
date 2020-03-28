@@ -39,16 +39,16 @@ class Node(Object):
             Optionally annotate function to provide additional
             information in the comment block.
 
-        Note
-        ----
-        The meta data section is necessary to fully parse the text format.
-        However, it can contain dumps that are big (e.g constant weights),
-        so it can be helpful to skip printing the meta data section.
-
         Returns
         -------
         text : str
             The text format of the expression.
+
+        Notes
+        -----
+        The meta data section is necessary to fully parse the text format.
+        However, it can contain dumps that are big (e.g constant weights),
+        so it can be helpful to skip printing the meta data section.
         """
         return _ffi_api.AsText(self, show_meta_data, annotate)
 
@@ -56,7 +56,7 @@ class Node(Object):
         return _ffi_api.PrettyPrint(self)
 
 
-@tvm._ffi.register_object("relay.SourceName")
+@tvm._ffi.register_object("SourceName")
 class SourceName(Object):
     """A identifier for a source location.
 
@@ -69,7 +69,7 @@ class SourceName(Object):
         self.__init_handle_by_constructor__(_ffi_api.SourceName, name)
 
 
-@tvm._ffi.register_object("relay.Span")
+@tvm._ffi.register_object("Span")
 class Span(Object):
     """Specifies a location in a source program.
 
@@ -149,3 +149,76 @@ def save_json(node):
         Saved json string.
     """
     return tvm.runtime._ffi_node_api.SaveJSON(node)
+
+
+def structural_equal(lhs, rhs, map_free_vars=False):
+    """Check structural equality of lhs and rhs.
+
+    The structural equality is recursively defined in the DAG of IRNodes.
+    There are two kinds of nodes:
+
+    - Graph node: a graph node in lhs can only be mapped as equal to
+      one and only one graph node in rhs.
+    - Normal node: equality is recursively defined without the restriction
+      of graph nodes.
+
+    Vars(tir::Var, TypeVar) and non-constant relay expression nodes are graph nodes.
+    For example, it means that `%1 = %x + %y; %1 + %1` is not structurally equal
+    to `%1 = %x + %y; %2 = %x + %y; %1 + %2` in relay.
+
+    A var-type node(e.g. tir::Var, TypeVar) can be mapped as equal to another var
+    with the same type if one of the following condition holds:
+
+    - They appear in a same definition point(e.g. function argument).
+    - They points to the same VarNode via the same_as relation.
+    - They appear in a same usage point, and map_free_vars is set to be True.
+
+    The rules for var are used to remap variables occurs in function
+    arguments and let-bindings.
+
+    Parameters
+    ----------
+    lhs : Object
+        The left operand.
+
+    rhs : Object
+        The left operand.
+
+    map_free_vars : bool
+        Whether or not shall we map free vars that does
+        not bound to any definitions as equal to each other.
+
+    Return
+    ------
+    result : bool
+        The comparison result.
+    """
+    return tvm.runtime._ffi_node_api.StructuralEqual(
+        lhs, rhs, False, map_free_vars)
+
+
+def assert_structural_equal(lhs, rhs, map_free_vars=False):
+    """Assert lhs and rhs are structurally equal to each other.
+
+    Parameters
+    ----------
+    lhs : Object
+        The left operand.
+
+    rhs : Object
+        The left operand.
+
+    map_free_vars : bool
+        Whether or not shall we map free vars that does
+        not bound to any definitions as equal to each other.
+
+    Raises
+    ------
+    ValueError : if assertion does not hold.
+
+    See Also
+    --------
+    structural_equal
+    """
+    tvm.runtime._ffi_node_api.StructuralEqual(
+        lhs, rhs, True, map_free_vars)
