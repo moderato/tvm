@@ -69,6 +69,9 @@ bool NeedRelax(const IterVar& iv,
       ts.dim_index == 0) {
     return true;
   }
+  if (!found_attach) {
+    return true;
+  }
   return static_cast<int>(scope.rank) <= ts.rank;
 }
 
