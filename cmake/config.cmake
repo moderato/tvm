@@ -191,10 +191,10 @@ set(USE_ANTLR OFF)
 set(USE_RELAY_DEBUG OFF)
 
 # Whether to build fast VTA simulator driver
-set(USE_VTA_FSIM ON)
+set(USE_VTA_FSIM OFF)
 
 # Whether to build cycle-accurate VTA simulator driver
-set(USE_VTA_TSIM ON)
+set(USE_VTA_TSIM OFF)
 
 # Whether to build VTA FPGA driver (device side only)
 set(USE_VTA_FPGA OFF)
@@ -204,3 +204,7 @@ set(USE_EXAMPLE_EXT_RUNTIME OFF)
 
 # Whether use Thrust
 set(USE_THRUST OFF)
+
+# Whether to build the TensorFlow TVMDSOOp module
+set(USE_TF_TVMDSOOP OFF)
+

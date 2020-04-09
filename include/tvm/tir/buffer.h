@@ -25,9 +25,8 @@
 #define TVM_TIR_BUFFER_H_
 
 #include <tvm/node/container.h>
-#include <tvm/tir/expr.h>
-#include <tvm/tir/op.h>
-
+#include <tvm/ir/expr.h>
+#include <tvm/tir/var.h>
 #include <string>
 
 
@@ -35,6 +34,9 @@ namespace tvm {
 namespace tir {
 // Internal node container Buffer
 class BufferNode;
+
+// forward declare Stmt
+class Stmt;
 
 /*! \brief buffer type */
 enum BufferType : int {
@@ -75,9 +77,9 @@ class Buffer : public ObjectRef {
    * \param offset The offset of ptr.
    */
   TVM_DLL PrimExpr access_ptr(int access_mask,
-                          DataType ptr_type = DataType::Handle(),
-                          int content_lanes = 1,
-                          PrimExpr offset = make_const(DataType::Int(32), 0)) const;
+                              DataType ptr_type = DataType::Handle(),
+                              int content_lanes = 1,
+                              PrimExpr offset = IntImm(DataType::Int(32), 0)) const;
   /*!
    * \brief Create an Expr that does a vector load at begin index.
    * \param begin The beginning index
@@ -164,6 +166,17 @@ class BufferNode : public Object {
         equal(buffer_type, other->buffer_type);
   }
 
+  void SHashReduce(SHashReducer hash_reduce) const {
+    hash_reduce.DefHash(data);
+    hash_reduce(dtype);
+    hash_reduce.DefHash(shape);
+    hash_reduce.DefHash(strides);
+    hash_reduce.DefHash(elem_offset);
+    hash_reduce(scope);
+    hash_reduce(data_alignment);
+    hash_reduce(buffer_type);
+  }
+
   /*! \return preferred index type for this buffer node */
   DataType DefaultIndexType() const {
     return shape.size() != 0 ? shape[0].dtype() : DataType::Int(32);
@@ -184,6 +197,7 @@ class BufferNode : public Object {
 
   static constexpr const char* _type_key = "Buffer";
   static constexpr const bool _type_has_method_sequal_reduce = true;
+  static constexpr const bool _type_has_method_shash_reduce = true;
   TVM_DECLARE_FINAL_OBJECT_INFO(BufferNode, Object);
 };
 

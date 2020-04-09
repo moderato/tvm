@@ -214,6 +214,7 @@ class Object {
   // member information
   static constexpr bool _type_has_method_visit_attrs = true;
   static constexpr bool _type_has_method_sequal_reduce = false;
+  static constexpr bool _type_has_method_shash_reduce = false;
   // NOTE: the following field is not type index of Object
   // but was intended to be used by sub-classes as default value.
   // The type index of Object is TypeIndex::kRoot
@@ -794,7 +795,7 @@ inline void Object::IncRef() {
 }
 
 inline void Object::DecRef() {
-  if (--ref_counter == 0) {
+  if (--ref_counter_ == 0) {
     if (this->deleter_ != nullptr) {
       (*this->deleter_)(this);
     }
