@@ -81,7 +81,7 @@ jnilint:
 	python3 3rdparty/dmlc-core/scripts/lint.py tvm4j-jni cpp jvm/native/src
 
 scalalint:
-	make -C vta/hardware/chisel lint
+	make -C vta/vta-hw/hardware/chisel lint
 
 lint: cpplint pylint jnilint scalalint
 
@@ -90,7 +90,7 @@ doc:
 
 javadoc:
 	# build artifact is in jvm/core/target/site/apidocs
-	cd jvm && mvn javadoc:javadoc
+	cd jvm && mvn javadoc:javadoc -Dnotimestamp=true
 
 # Cython build
 cython:

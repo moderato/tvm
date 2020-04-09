@@ -134,7 +134,7 @@ def test_qnn_legalize_qnn_conv2d():
         # Since same dtype, there should not be any transformation
         with tvm.target.create('llvm -device=arm_cpu -target=aarch64-linux-gnu -mattr=+v8.2a,+dotprod'):
             legalized_mod = relay.qnn.transform.Legalize()(mod)
-            assert alpha_equal(mod, legalized_mod)
+            assert tvm.ir.structural_equal(mod, legalized_mod)
 
         ################################################################
         # Check transformations for platforms without fast Int8 support.
@@ -157,7 +157,7 @@ def test_qnn_legalize_qnn_conv2d():
     # Check no transformation for Intel VNNI.
     with tvm.target.create('llvm -mcpu=skylake-avx512'):
         legalized_mod = relay.qnn.transform.Legalize()(mod)
-        assert alpha_equal(mod, legalized_mod)
+        assert tvm.ir.structural_equal(mod, legalized_mod)
 
     # ARM - so check that transformation has happened.
     with tvm.target.create('llvm -device=arm_cpu -target=aarch64-linux-gnu -mattr=+v8.2a,+dotprod'):
@@ -176,6 +176,13 @@ def test_qnn_legalize_qnn_conv2d():
     with tvm.target.create('llvm -device=arm_cpu -target=aarch64-linux-gnu'):
         legalized_mod = relay.qnn.transform.Legalize()(mod)
         assert 'cast' in legalized_mod.astext() and "qnn" not in legalized_mod.astext()
+
+    ###########################################
+    # Check transformations for CUDA platforms.
+    ###########################################
+    with tvm.target.create('cuda'):
+        legalized_mod = relay.qnn.transform.Legalize()(mod)
+        assert 'cast' in legalized_mod.astext() and "qnn" in legalized_mod.astext()
 
 
 def test_qnn_legalize_qnn_dense():
@@ -214,7 +221,7 @@ def test_qnn_legalize_qnn_dense():
         # Since same dtype, there should not be any transformation
         with tvm.target.create('llvm -device=arm_cpu -target=aarch64-linux-gnu -mattr=+v8.2a,+dotprod'):
             legalized_mod = relay.qnn.transform.Legalize()(mod)
-            assert alpha_equal(mod, legalized_mod)
+            assert tvm.ir.structural_equal(mod, legalized_mod)
 
         ################################################################
         # Check transformations for platforms without fast Int8 support.
@@ -237,7 +244,7 @@ def test_qnn_legalize_qnn_dense():
     # Check no transformation for Intel VNNI.
     with tvm.target.create('llvm -mcpu=skylake-avx512'):
         legalized_mod = relay.qnn.transform.Legalize()(mod)
-        assert alpha_equal(mod, legalized_mod)
+        assert tvm.ir.structural_equal(mod, legalized_mod)
 
     # ARM - so check that transformation has happened.
     with tvm.target.create('llvm -device=arm_cpu -target=aarch64-linux-gnu -mattr=+v8.2a,+dotprod'):
@@ -256,6 +263,13 @@ def test_qnn_legalize_qnn_dense():
     with tvm.target.create('llvm -device=arm_cpu -target=aarch64-linux-gnu'):
         legalized_mod = relay.qnn.transform.Legalize()(mod)
         assert 'cast' in legalized_mod.astext() and "qnn" not in legalized_mod.astext()
+
+    ###########################################
+    # Check transformations for CUDA platforms.
+    ###########################################
+    with tvm.target.create('cuda'):
+        legalized_mod = relay.qnn.transform.Legalize()(mod)
+        assert 'cast' in legalized_mod.astext() and "qnn" in legalized_mod.astext()
 
 
 if __name__ == "__main__":

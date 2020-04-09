@@ -18,7 +18,7 @@
  */
 
 /*!
- * \file src/tvm/relay/ir/hash.cc
+ * \file src/relay/ir/hash.cc
  * \brief Hash functions for Relay types and expressions.
  */
 #include <tvm/ir/type_functor.h>
@@ -423,12 +423,12 @@ size_t StructuralHash::operator()(const Expr& expr) const {
   return RelayHashHandler().ExprHash(expr);
 }
 
-TVM_REGISTER_GLOBAL("relay._analysis._expr_hash")
+TVM_REGISTER_GLOBAL("relay.analysis._expr_hash")
 .set_body_typed([](ObjectRef ref) {
   return static_cast<int64_t>(RelayHashHandler().Hash(ref));
 });
 
-TVM_REGISTER_GLOBAL("relay._analysis._type_hash")
+TVM_REGISTER_GLOBAL("relay.analysis._type_hash")
 .set_body_typed([](Type type) {
   return static_cast<int64_t>(RelayHashHandler().TypeHash(type));
 });

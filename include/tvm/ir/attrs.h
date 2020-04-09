@@ -118,7 +118,9 @@ class AttrFieldInfoNode : public Object {
     v->Visit("type_info", &type_info);
     v->Visit("description", &description);
   }
+
   static constexpr const char* _type_key = "AttrFieldInfo";
+  static constexpr bool _type_has_method_sequal_reduce = false;
   TVM_DECLARE_FINAL_OBJECT_INFO(AttrFieldInfoNode, Object);
 };
 
@@ -143,8 +145,13 @@ class AttrsEqualHandler;
 class AttrsEqual {
  public:
   bool operator()(const double& lhs, const double& rhs) const {
-    return lhs == rhs;
+    // fuzzy float pt comparison
+    constexpr double atol = 1e-9;
+    if (lhs == rhs) return true;
+    double diff = lhs - rhs;
+    return diff > -atol && diff < atol;
   }
+
   bool operator()(const int64_t& lhs, const int64_t& rhs) const {
     return lhs == rhs;
   }
@@ -273,30 +280,18 @@ class BaseAttrsNode : public Object {
    */
   TVM_DLL virtual size_t ContentHash(AttrsHash hasher) const = 0;
 
+  static constexpr const bool _type_has_method_sequal_reduce = true;
   static constexpr const char* _type_key = "Attrs";
   TVM_DECLARE_BASE_OBJECT_INFO(BaseAttrsNode, Object);
 };
 
-/*! \brief Base attribute container for all attributes */
+/*!
+ * \brief Managed reference to BaseAttrsNode.
+ * \sa AttrsNode, BaseAttrsNode
+ */
 class Attrs : public ObjectRef {
  public:
-  // normal constructor
-  Attrs() {}
-  // construct from shared ptr.
-  explicit Attrs(ObjectPtr<Object> n) : ObjectRef(n) {}
-
-  /*! \return The attribute node */
-  const BaseAttrsNode* operator->() const {
-    return ptr();
-  }
-  /*! \brief specify container node */
-  using ContainerType = BaseAttrsNode;
-
- private:
-  /*! \return the internal attribute node */
-  const BaseAttrsNode* ptr() const {
-    return static_cast<const BaseAttrsNode*>(get());
-  }
+  TVM_DEFINE_OBJECT_REF_METHODS(Attrs, ObjectRef, BaseAttrsNode);
 };
 
 /*!
@@ -309,12 +304,11 @@ class DictAttrsNode : public BaseAttrsNode {
  public:
   /*! \brief internal attrs map */
   Map<std::string, ObjectRef> dict;
-  /*!
-   * \brief Consruct a Attrs backed by DictAttrsNode.
-   * \param dict The attributes.
-   * \return The dict attributes.
-   */
-  TVM_DLL static Attrs make(Map<std::string, ObjectRef> dict);
+
+  bool SEqualReduce(const DictAttrsNode* other, SEqualReducer equal) const {
+    return equal(dict, other->dict);
+  }
+
   // implementations
   void VisitAttrs(AttrVisitor* v) final;
   void VisitNonDefaultAttrs(AttrVisitor* v) final;
@@ -327,6 +321,23 @@ class DictAttrsNode : public BaseAttrsNode {
   TVM_DECLARE_FINAL_OBJECT_INFO(DictAttrsNode, BaseAttrsNode);
 };
 
+/*!
+ * \brief Managed reference to DictAttrsNode
+ * \sa DictAttrsNode.
+ */
+class DictAttrs : public Attrs {
+ public:
+  /*!
+   * \brief Consruct a Attrs backed by DictAttrsNode.
+   * \param dict The attributes.
+   * \return The dict attributes.
+   */
+  TVM_DLL explicit DictAttrs(Map<std::string, ObjectRef> dict);
+
+
+  TVM_DEFINE_OBJECT_REF_METHODS(DictAttrs, Attrs, DictAttrsNode);
+  TVM_DEFINE_OBJECT_REF_COW_METHOD(DictAttrsNode);
+};
 
 // Namespace containing detail implementations
 namespace detail {
@@ -395,6 +406,33 @@ class AttrsEqualVisitor {
   const Object* lhs_;
   const Object* rhs_;
   const AttrsEqual& equal_;
+};
+
+class AttrsSEqualVisitor {
+ public:
+  bool result_{true};
+  // constructor
+  AttrsSEqualVisitor(const Object* lhs, const Object* rhs, const SEqualReducer& equal)
+      : lhs_(lhs), rhs_(rhs), equal_(equal) {
+  }
+  template<typename T>
+  AttrNopEntry operator()(const char* key, T* lhs_value) {
+    if (!result_) return AttrNopEntry();
+    const T* rhs_value =
+        reinterpret_cast<const T*>(
+            reinterpret_cast<const char*>(rhs_) +
+            (reinterpret_cast<const char*>(lhs_value) -
+             reinterpret_cast<const char*>(lhs_)));
+    if (!equal_(*lhs_value, *rhs_value)) {
+      result_ = false;
+    }
+    return AttrNopEntry();
+  }
+
+ private:
+  const Object* lhs_;
+  const Object* rhs_;
+  const SEqualReducer& equal_;
 };
 
 class AttrsHashVisitor {
@@ -811,6 +849,13 @@ class AttrsNode : public BaseAttrsNode {
         }
       }
     }
+  }
+
+  bool SEqualReduce(const DerivedType* other, SEqualReducer equal) const {
+    DerivedType* pself = self();
+    ::tvm::detail::AttrsSEqualVisitor visitor(pself, other, equal);
+    self()->__VisitAttrs__(visitor);
+    return visitor.result_;
   }
 
   Array<AttrFieldInfo> ListFieldInfo() const final {

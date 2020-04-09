@@ -32,13 +32,11 @@ def depthwise_conv2d_nchw(cfg, data, kernel, strides, padding, dilation, out_dty
 @autotvm.register_topi_schedule("depthwise_conv2d_nchw.cuda")
 def schedule_depthwise_conv2d_nchw(cfg, outs):
     """Schedule for depthwise_conv2d nchw forward.
-
     Parameters
     ----------
     outs: Array of Tensor
         The computation graph description of depthwise_conv2d
         in the format of an array of tensors.
-
     Returns
     -------
     s: Schedule
@@ -136,13 +134,11 @@ def schedule_depthwise_conv2d_nchw(cfg, outs):
 
 def schedule_depthwise_conv2d_nhwc(outs):
     """Schedule for depthwise_conv2d nhwc forward.
-
     Parameters
     ----------
     outs: Array of Tensor
         The computation graph description of depthwise_conv2d
         in the format of an array of tensors.
-
     Returns
     -------
     s: Schedule
@@ -219,13 +215,11 @@ def schedule_depthwise_conv2d_nhwc(outs):
 
 def schedule_depthwise_conv2d_backward_input_nhwc(outs):
     """Schedule for depthwise_conv2d nhwc backward wrt input.
-
     Parameters
     ----------
     outs: Array of Tensor
         The computation graph description of depthwise_conv2d
         backward wrt input in the format of an array of tensors.
-
     Returns
     -------
     s: Schedule
@@ -264,13 +258,11 @@ def schedule_depthwise_conv2d_backward_input_nhwc(outs):
 
 def schedule_depthwise_conv2d_backward_weight_nhwc(outs):
     """Schedule for depthwise_conv2d nhwc backward wrt weight.
-
     Parameters
     ----------
     outs: Array of Tensor
         The computation graph description of depthwise_conv2d
         backward wrt weight in the format of an array of tensors.
-
     Returns
     -------
     s: Schedule

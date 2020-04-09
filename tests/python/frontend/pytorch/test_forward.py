@@ -351,21 +351,33 @@ def test_forward_adaptiveavgpool():
     verify_model(AdaptiveAvgPool2D1().float().eval(), input_data=input_data)
     verify_model(AdaptiveAvgPool2D2().float().eval(), input_data=input_data)
 
-def test_forward_maxpool():
+def test_forward_maxpool2d():
     torch.set_grad_enabled(False)
     input_shape = [1, 3, 10, 10]
-
-    class MaxPool2D1(Module):
-        def forward(self, *args):
-            return torch.nn.MaxPool2d(kernel_size=[1, 1])(args[0])
-
-    class MaxPool2D2(Module):
-        def forward(self, *args):
-            return torch.nn.MaxPool2d(kernel_size=[10, 10])(args[0])
-
     input_data = torch.rand(input_shape).float()
-    verify_model(MaxPool2D1().float().eval(), input_data=input_data)
-    verify_model(MaxPool2D2().float().eval(), input_data=input_data)
+
+    verify_model(torch.nn.MaxPool2d(kernel_size=[1, 1]).eval(),
+                input_data)
+    verify_model(torch.nn.MaxPool2d(kernel_size=[10, 10]).eval(),
+                input_data)
+    verify_model(torch.nn.MaxPool2d(kernel_size=[4, 4],
+                                    padding=2,
+                                    stride=2).eval(),
+                input_data)
+
+def test_forward_maxpool1d():
+    torch.set_grad_enabled(False)
+    input_shape = [1, 3, 10]
+    input_data = torch.rand(input_shape).float()
+
+    verify_model(torch.nn.MaxPool1d(kernel_size=1).eval(),
+                input_data)
+    verify_model(torch.nn.MaxPool1d(kernel_size=10).eval(),
+                input_data)
+    verify_model( torch.nn.MaxPool1d(kernel_size=4,
+                                    padding=2,
+                                    stride=2).eval(),
+                input_data)
 
 def test_forward_avgpool():
     torch.set_grad_enabled(False)
@@ -428,7 +440,21 @@ def test_forward_conv():
     input_data = torch.rand(input_shape).float()
     verify_model(Conv2D1().float().eval(), input_data=input_data)
     verify_model(Conv2D2().float().eval(), input_data=input_data)
+    # depth wise conv with channel mult 2
     verify_model(Conv2D3().float().eval(), input_data=input_data)
+    # group conv
+    verify_model(torch.nn.Conv2d(8, 8, kernel_size=(3, 3),
+                                 stride=(1, 1), groups=2).eval(),
+                 input_data=torch.randn((1, 8, 16, 16)))
+
+
+def test_forward_conv_transpose():
+    torch.set_grad_enabled(False)
+    input_shape = [1, 3, 10, 10]
+    input_data = torch.rand(input_shape).float()
+    verify_model(torch.nn.ConvTranspose2d(3, 6, 7, bias=True), input_data=input_data)
+    verify_model(torch.nn.ConvTranspose2d(3, 12, 3, bias=False), input_data=input_data)
+
 
 def test_forward_threshold():
     torch.set_grad_enabled(False)
@@ -452,27 +478,20 @@ def test_forward_contiguous():
     input_data = torch.rand(input_shape).float()
     verify_model(Contiguous1().float().eval(), input_data=input_data)
 
+
 def test_forward_batchnorm():
-    torch.set_grad_enabled(False)
-    input_shape = [1, 3, 10, 10]
+    def init_weight(m):
+        torch.nn.init.normal_(m.weight, 0, 0.01)
+        torch.nn.init.normal_(m.bias)
 
-    class BatchNorm1(Module):
-        def __init__(self):
-            super(BatchNorm1, self).__init__()
-            self.batch_norm = torch.nn.BatchNorm2d(3, affine=True)
-        def forward(self, *args):
-            return self.batch_norm(args[0])
+    inp_2d = torch.rand((1, 16, 10, 10))
+    inp_3d = torch.rand((1, 16, 10, 10, 10))
 
-    class BatchNorm2(Module):
-        def __init__(self):
-            super(BatchNorm2, self).__init__()
-            self.batch_norm = torch.nn.BatchNorm2d(3, affine=False)
-        def forward(self, *args):
-            return self.batch_norm(args[0])
+    for bn, inp in [(torch.nn.BatchNorm2d(16), inp_2d),
+                    (torch.nn.BatchNorm3d(16), inp_3d)]:
+        init_weight(bn.eval())
+        verify_model(bn.eval(), input_data=inp)
 
-    input_data = torch.rand(input_shape).float()
-    verify_model(BatchNorm1().float().eval(), input_data=input_data)
-    verify_model(BatchNorm2().float().eval(), input_data=input_data)
 
 def test_forward_transpose():
     torch.set_grad_enabled(False)
@@ -708,6 +727,37 @@ def test_to():
     verify_model(ToInt().eval(), torch.tensor(2.0))
 
 
+def test_adaptive_pool3d():
+    for ishape in [(1, 32, 16, 16, 16),
+                   (1, 32, 9, 15, 15),
+                   (1, 32, 13, 7, 7)]:
+        inp = torch.rand(ishape)
+        verify_model(torch.nn.AdaptiveMaxPool3d((1, 1, 1)).eval(), inp)
+        verify_model(torch.nn.AdaptiveMaxPool3d((2, 2, 2)).eval(), inp)
+        verify_model(torch.nn.AdaptiveAvgPool3d((1, 1, 1)).eval(), inp)
+        verify_model(torch.nn.AdaptiveAvgPool3d((2, 2, 2)).eval(), inp)
+        verify_model(torch.nn.AdaptiveAvgPool3d((4, 8, 8)).eval(), inp)
+        verify_model(torch.nn.AdaptiveMaxPool3d((7, 8, 9)).eval(), inp)
+
+
+def test_conv3d():
+    for ishape in [(1, 32, 16, 16, 16),
+                   (1, 32, 9, 15, 15),
+                   (1, 32, 13, 7, 7)]:
+        inp = torch.rand(ishape)
+        verify_model(torch.nn.Conv3d(32, 16, (3, 3, 3),
+                                     padding=(1, 1, 1)).eval(),
+                     inp),
+        verify_model(torch.nn.Conv3d(32, 16, (5, 5, 5),
+                                     padding=(2, 2, 2)).eval(),
+                     inp),
+        verify_model(torch.nn.Conv3d(32, 16, kernel_size=1).eval(),
+                     inp)
+        # downsample
+        verify_model(torch.nn.Conv3d(32, 16, kernel_size=1, stride=2).eval(),
+                     inp)
+
+
 # Model tests
 def test_resnet18():
     torch.set_grad_enabled(False)
@@ -756,7 +806,6 @@ def test_vgg11_bn():
     verify_model("vgg11_bn")
 """
 
-
 def test_custom_conversion_map():
     def get_roi_align():
         pool_size = 5
@@ -801,11 +850,199 @@ def test_segmentaton_models():
 
     inp = [torch.rand((1, 3, 300, 300), dtype=torch.float)]
 
-    for model in [fcn, deeplab]:
-        # depthwise + dilated covolution not supported on x86
-        # see https://github.com/apache/incubator-tvm/issues/4962
-        verify_model(SegmentationModelWrapper(model.eval()), inp,
-                     ctx_list=[("cuda", tvm.gpu(0))])
+    verify_model(SegmentationModelWrapper(fcn.eval()), inp)
+
+    # depthwise + dilated covolution not supported on x86
+    # see https://github.com/apache/incubator-tvm/issues/4962
+    cuda_ctx = ("cuda", tvm.gpu(0))
+    if cuda_ctx[1].exist:
+        verify_model(SegmentationModelWrapper(deeplab.eval()), inp, [cuda_ctx])
+
+
+def test_3d_models():
+    input_shape = (1, 3, 4, 56, 56)
+    resnet3d = torchvision.models.video.r3d_18(pretrained=True).eval()
+    verify_model(resnet3d, [torch.rand(input_shape)])
+
+
+def verify_script_model(pt_model, ishapes):
+    script_module = torch.jit.script(pt_model)
+    input_names = get_graph_input_names(script_module)
+    input_shapes = dict(zip(input_names, ishapes))
+
+    inputs = [torch.randn(input_shapes[input_name], dtype=torch.float)
+              for input_name in input_names]
+
+    mod, params = relay.frontend.from_pytorch(script_module, input_shapes)
+
+    executor = relay.create_executor("vm", mod=mod, ctx=tvm.cpu(0),
+                                     target="llvm")
+    evaluator = executor.evaluate()
+
+    for name, inp in zip(input_names, inputs):
+        params[name] = inp.numpy()
+
+    op_res = evaluator(**params)
+
+    with torch.no_grad():
+        pt_result = pt_model(*inputs)
+
+    if not isinstance(pt_result, torch.Tensor):
+        tvm_res = op_res.asnumpy().item()
+        assert pt_result == tvm_res
+    else:
+        tvm.testing.assert_allclose(op_res.asnumpy(), pt_result.numpy(),
+                                    rtol=1e-5, atol=1e-5)
+
+
+def test_control_flow():
+    class SimpleIf(torch.nn.Module):
+        def __init__(self, N, M):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.rand(N, M))
+
+        def forward(self, inp):
+            if inp.sum() > 0.:
+                output = self.weight + inp
+            else:
+                output = self.weight - inp
+            return output
+
+    class NestedIf(torch.nn.Module):
+        def __init__(self, N, M):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.rand(N, M))
+
+        def forward(self, inp):
+            if inp.sum() > 0.:
+                if inp.mean() > 0.:
+                    output = self.weight + inp
+                else:
+                    output = self.weight - inp
+            else:
+                if inp.mean() >= 0.:
+                    output = self.weight * inp
+                else:
+                    output = self.weight / inp
+
+            return output
+
+    class ScalarLoop(torch.nn.Module):
+        def forward(self, inp):
+            a = 0
+            for i in range(inp.size(0)):
+                b = i * i
+                b = b + 1
+                a += b
+            if a != 0:
+                a += 1
+            else:
+                a += 2
+            return a
+
+    class SimpleLoop(torch.nn.Module):
+        def forward(self, inp):
+            a = inp
+            for i in range(inp.size(0)):
+                b = a * 2.
+                c = a + b
+                a += c
+            return a
+
+    class LoopWithIf(torch.nn.Module):
+        def forward(self, inp):
+            a = inp
+            for i in range(inp.size(0)):
+                b = a * 2.
+                b = a + b
+                if b.sum() > 0.0:
+                    a += b
+                else:
+                    a -= b
+            return a
+
+    class NestedLoop(torch.nn.Module):
+        def forward(self, inp):
+            a = inp
+            for i in range(inp.size(0)):
+                b = a * float(i)
+                for j in range(inp.size(1)):
+                    a += b * float(j)
+            return a
+
+    class SimpleScalarWhileLoop(torch.nn.Module):
+        def forward(self, inp):
+            a = 1
+            i = 0
+            while i <= inp.size(0):
+                a += i
+                i += 2
+            i = 0
+            # also test constant init cond
+            while i < 10:
+                a += i
+                i += 3
+            return a
+
+    class SimpleWhileLoop(torch.nn.Module):
+        def forward(self, inp):
+            a = inp
+            i = 0
+            while i < inp.size(0):
+                a += a * float(i) * 2.0
+                i += 1
+            return a
+
+    models = [
+        SimpleIf(10, 20),
+        NestedIf(10, 20),
+        ScalarLoop(),
+        SimpleLoop(),
+        LoopWithIf(),
+        SimpleScalarWhileLoop(),
+        SimpleWhileLoop(),
+        NestedLoop(),
+    ]
+
+    for pt_model in models:
+        verify_script_model(pt_model.eval(), [(10, 20)])
+
+
+def test_simple_rnn():
+    # The mixed tracing and scripting example from
+    # https://pytorch.org/tutorials/beginner/Intro_to_TorchScript_tutorial.html#mixing-scripting-and-tracing
+    class DecisionGate(torch.nn.Module):
+        def forward(self, x):
+            if x.sum() > 0:
+                return x
+            else:
+                return -x
+
+    class Cell(torch.nn.Module):
+        def __init__(self, dg):
+            super(Cell, self).__init__()
+            self.dg = dg
+            self.linear = torch.nn.Linear(4, 4)
+
+        def forward(self, x, h):
+            new_h = torch.tanh(self.dg(self.linear(x)) + h)
+            return new_h, new_h
+
+    class RNNLoop(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            x = torch.rand(10, 4, dtype=torch.float)
+            h = torch.rand(10, 4, dtype=torch.float)
+            self.cell = torch.jit.trace(Cell(DecisionGate()), (x, h))
+
+        def forward(self, xs):
+            h = torch.zeros(10, 4, dtype=torch.float)
+            y = torch.zeros(10, 4, dtype=torch.float)
+            for i in range(xs.size(0)):
+                y, h = self.cell(xs[i], h)
+            return y
+
+    verify_script_model(RNNLoop().eval(), [(10, 10, 4)])
 
 
 if __name__ == "__main__":
@@ -817,9 +1054,11 @@ if __name__ == "__main__":
     test_forward_concatenate()
     test_forward_relu()
     test_forward_adaptiveavgpool()
-    test_forward_maxpool()
+    test_forward_maxpool2d()
+    test_forward_maxpool1d()
     test_forward_hardtanh()
     test_forward_conv()
+    test_forward_conv_transpose()
     test_forward_threshold()
     test_forward_contiguous()
     test_forward_batchnorm()
@@ -840,13 +1079,17 @@ if __name__ == "__main__":
     test_forward_chunk()
     test_upsample()
     test_to()
+    test_adaptive_pool3d()
+    test_conv3d()
 
     # Model tests
     test_resnet18()
     test_squeezenet1_0()
     test_squeezenet1_1()
     test_densenet121()
-    test_inception_v3()
+    # disable inception test for now, since loading it takes ~5min on torchvision-0.5 due to scipy bug
+    # See https://discuss.pytorch.org/t/torchvisions-inception-v3-takes-much-longer-to-load-than-other-models/68756
+    # test_inception_v3()
     test_googlenet()
     test_mnasnet0_5()
     test_mobilenet_v2()
@@ -854,9 +1097,14 @@ if __name__ == "__main__":
     test_custom_conversion_map()
 
     test_segmentaton_models()
+    test_3d_models()
 
     # Quantization test
     from qnn_test import test_quantized_imagenet, test_quantized_modules
 
     test_quantized_modules()
     test_quantized_imagenet()
+
+    # Test simple conditionals and loop
+    test_control_flow()
+    test_simple_rnn()
