@@ -1228,9 +1228,17 @@ constexpr const char* tvm_storage_sync = "tvm_storage_sync";
 /*!
  * \brief See pseudo code
  *
- *  Type tvm_warp_shuffle(Type value, warp_id) {
+ *  Type tvm_warp_shuffle(Type value, warp_id, width, warp_size) {
  *     return (value passed in by warp indicated by warp_id);
  *  }
+ *
+ *  Parameter warp_id indicates the source thread ID in a warp.
+ *
+ *  Parameter width indicates the number of threads involved in one
+ *  shuffle. See CUDA document for __shfl.
+ *
+ *  Parameter warp_size is the size of a warp, which helps a backend
+ *  to determine wheter the width paramter is legal.
  */
 constexpr const char* tvm_warp_shuffle = "tvm_warp_shuffle";
 /*!
@@ -1338,20 +1346,20 @@ enum TVMStructFieldKind : int {
 namespace tvm {
 namespace runtime {
 // Additional implementattion overloads for PackedFunc.
-inline TVMPODValue_::operator tvm::Integer() const {
-  if (type_code_ == kTVMNullptr) return Integer();
-  if (type_code_ == kDLInt) {
-    CHECK_LE(value_.v_int64, std::numeric_limits<int>::max());
-    CHECK_GE(value_.v_int64, std::numeric_limits<int>::min());
-    return Integer(static_cast<int>(value_.v_int64));
+
+template<>
+struct PackedFuncValueConverter<tvm::Integer> {
+  // common rule for RetValue and ArgValue
+  static tvm::Integer From(const TVMPODValue_& val) {
+    if (val.type_code() == kTVMNullptr) {
+      return Integer(ObjectPtr<Object>(nullptr));
+    }
+    if (val.type_code() == kDLInt) {
+      return Integer(val.operator int());
+    }
+    return val.AsObjectRef<tvm::Integer>();
   }
-  TVM_CHECK_TYPE_CODE(type_code_, kTVMObjectHandle);
-  Object* ptr = static_cast<Object*>(value_.v_handle);
-  CHECK(ObjectTypeChecker<Integer>::Check(ptr))
-      << "Expect type " << ObjectTypeChecker<PrimExpr>::TypeName()
-      << " but get " << ptr->GetTypeKey();
-  return Integer(ObjectPtr<Object>(ptr));
-}
+};
 }  // namespace runtime
 }  // namespace tvm
 

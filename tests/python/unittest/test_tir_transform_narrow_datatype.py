@@ -20,9 +20,9 @@ from tvm.tir import const
 
 
 def lower_stmt(params, stmt, target_bits):
-    func = tvm.tir.PrimFunc(params, stmt).with_attr(
-        "target_bits", target_bits)
-    func = tvm.tir.transform.NarrowDataType()(tvm.IRModule.from_expr(func))["main"]
+    func = tvm.tir.PrimFunc(params, stmt)
+    func = tvm.tir.transform.NarrowDataType(target_bits)(
+        tvm.IRModule.from_expr(func))["main"]
     stmt = func.body
     return stmt
 
@@ -148,7 +148,7 @@ def test_reduce():
         B = te.compute((), lambda *idx: te.sum(A[k], axis=k), name='B')
         s = te.create_schedule(B.op)
         stmt = lower_sch(s, [A, B], target_bits)
-        assert stmt.body[1].loop_var.dtype == target_dtype
+        assert stmt[1].loop_var.dtype == target_dtype
 
     # i32 -> i32
     check(const(64, dtype='int32'), 32, 'int32')

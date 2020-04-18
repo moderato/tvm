@@ -94,7 +94,6 @@ class StmtFunctor<R(const Stmt& n, Args... args)> {
   virtual R VisitStmt_(const BufferStoreNode* op, Args... args) STMT_FUNCTOR_DEFAULT;
   virtual R VisitStmt_(const FreeNode* op, Args... args) STMT_FUNCTOR_DEFAULT;
   virtual R VisitStmt_(const AssertStmtNode* op, Args... args) STMT_FUNCTOR_DEFAULT;
-  virtual R VisitStmt_(const ProducerConsumerNode* op, Args... args) STMT_FUNCTOR_DEFAULT;
   virtual R VisitStmt_(const ProvideNode* op, Args... args) STMT_FUNCTOR_DEFAULT;
   virtual R VisitStmt_(const RealizeNode* op, Args... args) STMT_FUNCTOR_DEFAULT;
   virtual R VisitStmt_(const PrefetchNode* op, Args... args) STMT_FUNCTOR_DEFAULT;
@@ -117,7 +116,6 @@ class StmtFunctor<R(const Stmt& n, Args... args)> {
     IR_STMT_FUNCTOR_DISPATCH(StoreNode);
     IR_STMT_FUNCTOR_DISPATCH(FreeNode);
     IR_STMT_FUNCTOR_DISPATCH(AssertStmtNode);
-    IR_STMT_FUNCTOR_DISPATCH(ProducerConsumerNode);
     IR_STMT_FUNCTOR_DISPATCH(ProvideNode);
     IR_STMT_FUNCTOR_DISPATCH(RealizeNode);
     IR_STMT_FUNCTOR_DISPATCH(PrefetchNode);
@@ -158,7 +156,6 @@ class TVM_DLL StmtVisitor :
   void VisitStmt_(const BufferStoreNode* op) override;
   void VisitStmt_(const FreeNode* op) override;
   void VisitStmt_(const AssertStmtNode* op) override;
-  void VisitStmt_(const ProducerConsumerNode* op) override;
   void VisitStmt_(const ProvideNode* op) override;
   void VisitStmt_(const RealizeNode* op) override;
   void VisitStmt_(const PrefetchNode* op) override;
@@ -253,7 +250,6 @@ class TVM_DLL StmtMutator :
   Stmt VisitStmt_(const BufferStoreNode* op) override;
   Stmt VisitStmt_(const FreeNode* op) override;
   Stmt VisitStmt_(const AssertStmtNode* op) override;
-  Stmt VisitStmt_(const ProducerConsumerNode* op) override;
   Stmt VisitStmt_(const ProvideNode* op) override;
   Stmt VisitStmt_(const RealizeNode* op) override;
   Stmt VisitStmt_(const PrefetchNode* op) override;
@@ -326,7 +322,7 @@ class StmtExprMutator :
  *          won't do further recursion.
  * \param postorder The function called after recursive mutation.
  *          The recursive mutation result is passed to postorder for further mutation.
- * \param only_enable List of StringImm.
+ * \param only_enable List of runtime::String.
  *          If it is empty, all IRNode will call preorder/postorder
  *          If it is not empty, preorder/postorder will only be called
  *          when the IRNode's type key is in the list.
@@ -334,7 +330,7 @@ class StmtExprMutator :
 TVM_DLL Stmt IRTransform(Stmt node,
                          const runtime::PackedFunc& preorder,
                          const runtime::PackedFunc& postorder,
-                         const Array<PrimExpr>& only_enable = {});
+                         const Array<runtime::String>& only_enable = {});
 
 /*!
  * \brief recursively visit the ir in post DFS order node, apply fvisit
