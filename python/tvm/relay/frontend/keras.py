@@ -186,8 +186,11 @@ def _convert_merge(inexpr, keras_layer, _):
     elif merge_type == 'Subtract':
         assert len(inexpr) == 2, "Subtract merge takes 2 inputs."
         ret = _op.subtract(ret, inexpr[1])
-    elif merge_type in ['Add', 'Multiply', 'Maximum']:
-        op_map = {'Add': _op.add, 'Multiply': _op.multiply, 'Maximum': _op.maximum}
+    elif merge_type in ['Add', 'Multiply', 'Minimum', 'Maximum']:
+        op_map = {'Add': _op.add,
+                  'Multiply': _op.multiply,
+                  'Minimum': _op.minimum,
+                  'Maximum': _op.maximum}
         for i in range(1, len(inexpr)):
             ret = op_map[merge_type](ret, inexpr[i])
     elif merge_type == 'Average':
@@ -287,15 +290,7 @@ def _convert_convolution(inexpr, keras_layer, etab):
         in_w = keras_layer.input_shape[2]
         pad_t, pad_b = _get_pad_pair(in_h, dilated_kernel_h, stride_h)
         pad_l, pad_r = _get_pad_pair(in_w, dilated_kernel_w, stride_w)
-        if pad_t == pad_b and pad_l == pad_r:
-            params['padding'] = (pad_t, pad_l)
-        elif etab.data_layout == 'NCHW':
-            inexpr = _op.nn.pad(data=inexpr, pad_width=(
-                (0, 0), (0, 0), (pad_t, pad_b), (pad_l, pad_r)))
-        else:
-            inexpr = _op.nn.pad(data=inexpr, pad_width=(
-                (0, 0), (pad_t, pad_b), (pad_l, pad_r), (0, 0)))
-
+        params['padding'] = (pad_t, pad_l, pad_b, pad_r)
     else:
         msg = 'Padding with {} is not supported for operator Convolution ' \
               'in frontend Keras.'
@@ -421,15 +416,7 @@ def _convert_separable_convolution(inexpr, keras_layer, etab):
         in_w = keras_layer.input_shape[2]
         pad_t, pad_b = _get_pad_pair(in_h, kernel_h, stride_h)
         pad_l, pad_r = _get_pad_pair(in_w, kernel_w, stride_w)
-        if pad_t == pad_b and pad_l == pad_r:
-            params0['padding'] = (pad_t, pad_l)
-        elif etab.data_layout == 'NCHW':
-            inexpr = _op.nn.pad(data=inexpr, pad_width=(
-                (0, 0), (0, 0), (pad_t, pad_b), (pad_l, pad_r)))
-        else:
-            inexpr = _op.nn.pad(data=inexpr, pad_width=(
-                (0, 0), (pad_t, pad_b), (pad_l, pad_r), (0, 0)))
-
+        params0['padding'] = (pad_t, pad_l, pad_b, pad_r)
     else:
         msg = 'Padding with {} is not supported for operator Separable ' \
               'Convolution in frontend Keras.'
@@ -902,6 +889,7 @@ _convert_map = {
     # 'TimeDistributed'        : _default_skip,
 
     'Average'                  : _convert_merge,
+    'Minimum'                  : _convert_merge,
     'Maximum'                  : _convert_merge,
     'Dot'                      : _convert_merge,
     'Permute'                  : _convert_permute,
@@ -910,6 +898,7 @@ _convert_map = {
 
     'InputLayer'               : _default_skip,
     'Dropout'                  : _default_skip,
+    'AlphaDropout'             : _default_skip,
     'SpatialDropout2D'         : _default_skip,
     'SpatialDropout1D'         : _default_skip,
     'GaussianDropout'          : _default_skip,

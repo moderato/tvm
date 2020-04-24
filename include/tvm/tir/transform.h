@@ -58,6 +58,27 @@ TVM_DLL Pass CreatePrimFuncPass(const runtime::TypedPackedFunc<
                                 const std::string& name,
                                 const tvm::Array<runtime::String>& required);
 
+
+/*!
+ * \brief Inject prefetch instructions into stmt.
+ *
+ * \return The pass.
+ */
+TVM_DLL Pass InjectPrefetch();
+
+// TODO(tvm-team): consolidate configs to the PassContext
+/*!
+ * \brief Flatten the multi-dimensional read/write
+ *  to single dimensional Load/Store
+ *
+ * \param cache_line_size The size of CPU cache line.
+ * \param create_bound_attribute Whether to create bound attributes.
+ *
+ * \return The Pass
+ */
+TVM_DLL Pass StorageFlatten(int cache_line_size,
+                            bool create_bound_attribute = false);
+
 /*!
  * \brief Inject copy intrinsics with optional pad.
  *
@@ -207,7 +228,6 @@ TVM_DLL Pass InstrumentBoundCheckers();
  */
 TVM_DLL Pass MakePackedAPI(int num_unpacked_args);
 
-
 /*!
  * \brief Remap the thread axis
  *
@@ -220,7 +240,6 @@ TVM_DLL Pass MakePackedAPI(int num_unpacked_args);
  */
 TVM_DLL Pass RemapThreadAxis(Map<runtime::String, IterVar> axis_map);
 
-
 /*!
  * \brief Lower custom datatypes.
  *
@@ -229,6 +248,13 @@ TVM_DLL Pass RemapThreadAxis(Map<runtime::String, IterVar> axis_map);
  * \return The pass.
  */
 TVM_DLL Pass LowerCustomDatatypes();
+
+/*!
+ * \brief Decorate all the function's body as device function.
+ *
+ * \return The pass.
+ */
+TVM_DLL Pass DecorateDeviceScope();
 
 /*!
  * \brief Split the function into a host function and device functions.
@@ -312,6 +338,16 @@ TVM_DLL Pass CombineContextCall();
  * \return The pass.
  */
 TVM_DLL Pass NarrowDataType(int target_bits);
+
+/*!
+ * \brief Rewrite the pointer content type of arguments,
+ *  as well as Alloc internal to the function to use
+ *  the most frequently accessed type for load/store
+ *  to avoid pointer casting in backend when possible.
+ *
+ * \return The pass.
+ */
+TVM_DLL Pass PointerValueTypeRewrite();
 
 }  // namespace transform
 }  // namespace tir

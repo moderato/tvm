@@ -27,7 +27,6 @@
 
 #include <tvm/tir/transform.h>
 #include <tvm/tir/analysis.h>
-#include <tvm/tir/ir_pass.h>
 #include <tvm/target/codegen.h>
 #include <tvm/runtime/container.h>
 #include <tvm/runtime/registry.h>
@@ -130,35 +129,6 @@ transform::Pass Filter(FCond fcond) {
 }
 
 
-IRModule BuildIRModule(const Array<ObjectRef>& out_arg_list,
-                       tir::Stmt stmt,
-                       const std::string& name,
-                       const BuildConfig& config) {
-  Array<tir::Var> params;
-  Map<tir::Var, tir::Buffer> buffer_map;
-
-  for (auto var : out_arg_list) {
-    if (auto* n = var.as<tir::VarNode>()) {
-      params.push_back(GetRef<tir::Var>(n));
-    } else {
-      tir::Buffer buffer = Downcast<tir::Buffer>(var);
-      tir::Var bptr(buffer->name, DataType::Handle());
-      params.push_back(bptr);
-      buffer_map.Set(bptr, buffer);
-    }
-  }
-
-  auto f = tir::PrimFunc(params, stmt, VoidType(), buffer_map);
-  f = WithAttr(std::move(f), "global_symbol", runtime::String(name));
-
-  if (config->restricted_func) {
-    f = WithAttr(std::move(f), "tir.noalias", Integer(1));
-  }
-
-  return IRModule(Map<GlobalVar, BaseFunc>({{GlobalVar(name), f}}));
-}
-
-
 IRModule lower(te::Schedule sch,
                const Array<te::Tensor>& args,
                const std::string& name,
@@ -168,23 +138,31 @@ IRModule lower(te::Schedule sch,
 
   sch = sch.normalize();
 
-  // Phase 0
+  // Before TIR transformation.
   auto bounds = te::InferBound(sch);
   auto stmt = te::ScheduleOps(sch, bounds, false);
-  stmt = tir::InjectPrefetch(stmt);
+  bool compact = te::VerifyCompactBuffer(stmt);
 
-  bool compact = tir::VerifyCompactBuffer(stmt);
   Map<te::Tensor, tir::Buffer> out_binds;
   GetBinds(args, compact, binds, &out_binds, &out_arg_list, config);
 
-  // Phase 1
-  stmt = tir::StorageFlatten(stmt, out_binds, 64,
-                             config->instrument_bound_checkers);
+  // build the function
+  tir::PrimFunc f = te::SchedulePostProcToPrimFunc(
+      out_arg_list, std::move(stmt), out_binds);
+  f = WithAttr(std::move(f), "global_symbol", runtime::String(name));
+  if (config->restricted_func) {
+    f = WithAttr(std::move(f), "tir.noalias", Integer(1));
+  }
 
-  // convert to IRModule.
-  auto mod = BuildIRModule(out_arg_list, stmt, name, config);
+  auto mod = IRModule(Map<GlobalVar, BaseFunc>({{GlobalVar(name), f}}));
   auto pass_list = Array<tvm::transform::Pass>();
 
+  // Phase 0
+  pass_list.push_back(tir::transform::InjectPrefetch());
+  pass_list.push_back(
+      tir::transform::StorageFlatten(64, config->instrument_bound_checkers));
+  // Phase 1
+  pass_list.push_back(tir::transform::NarrowDataType(32));
   pass_list.push_back(tir::transform::Simplify());
   pass_list.push_back(tir::transform::LoopPartition(config->partition_const_loop));
   pass_list.push_back(tir::transform::VectorizeLoop(!config->disable_vectorize));
@@ -217,10 +195,10 @@ split_dev_host_funcs(IRModule mod_mixed,
                      const Target& target,
                      const Target& target_host,
                      const BuildConfig& config) {
-  mod_mixed = BindTarget(target)(std::move(mod_mixed));
-  tir::VerifyMemory(mod_mixed);
-
-  Array<tvm::transform::Pass> mixed_pass_list = {BindTarget(target)};
+  Array<tvm::transform::Pass> mixed_pass_list = {
+    BindTarget(target),
+    tir::transform::VerifyMemory()
+  };
   if (config->detect_global_barrier) {
     mixed_pass_list.push_back(tir::transform::ThreadSync("global"));
   }
@@ -257,6 +235,7 @@ split_dev_host_funcs(IRModule mod_mixed,
     }),
     BindTarget(target),
     tir::transform::LowerWarpMemory(),
+    tir::transform::Simplify(),
     tir::transform::LowerIntrin(),
     tir::transform::LowerDeviceStorageAccessInfo(),
   };
