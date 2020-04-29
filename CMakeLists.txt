@@ -54,6 +54,9 @@ tvm_option(PICOJSON_PATH "Path to PicoJSON" "3rdparty/picojson")
 
 # Contrib library options
 tvm_option(USE_BLAS "The blas library to be linked" none)
+
+tvm_option(USE_XSMM "The xsmm library to be linked" none)
+
 tvm_option(USE_MKL_PATH "MKL root path when use MKL blas" none)
 tvm_option(USE_MKLDNN "Build with MKLDNN" OFF)
 tvm_option(USE_CUDNN "Build with cuDNN" OFF)
@@ -293,6 +296,9 @@ include(cmake/modules/LLVM.cmake)
 include(cmake/modules/Micro.cmake)
 include(cmake/modules/ANTLR.cmake)
 include(cmake/modules/contrib/BLAS.cmake)
+
+include(cmake/modules/contrib/XSMM.cmake)
+
 include(cmake/modules/contrib/CODEGENC.cmake)
 include(cmake/modules/contrib/DNNL.cmake)
 include(cmake/modules/contrib/Random.cmake)

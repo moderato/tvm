@@ -135,6 +135,9 @@ set(USE_MKL_PATH none)
 # Whether use MKLDNN library, choices: ON, OFF, path to mkldnn library
 set(USE_MKLDNN OFF)
 
+# Whether use XSMM library, choices: ON, OFF, path to libxsmm library
+set(USE_XSMM none)
+
 # Whether use OpenMP thread pool, choices: gnu, intel
 # Note: "gnu" uses gomp library, "intel" uses iomp5 library
 set(USE_OPENMP none)
