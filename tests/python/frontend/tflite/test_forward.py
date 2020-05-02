@@ -76,13 +76,15 @@ def get_real_image(im_height, im_width):
 def run_tvm_graph(tflite_model_buf, input_data, input_node, num_output=1, target='llvm',
                   out_names=None):
     """ Generic function to compile on relay and execute on tvm """
+    # TFLite.Model.Model has changed to TFLite.Model from 1.14 to 2.1
     try:
         import tflite.Model
+        tflite_model = tflite.Model.Model.GetRootAsModel(tflite_model_buf, 0)
+    except AttributeError:
+        import tflite
+        tflite_model = tflite.Model.GetRootAsModel(tflite_model_buf, 0)
     except ImportError:
         raise ImportError("The tflite package must be installed")
-
-    # get TFLite model from buffer
-    tflite_model = tflite.Model.Model.GetRootAsModel(tflite_model_buf, 0)
 
     input_data = convert_to_list(input_data)
     input_node = convert_to_list(input_node)
@@ -216,15 +218,19 @@ def with_fused_activation_function(input_tensor, fn_name):
         return math_ops.tanh(input_tensor)
     raise AssertionError("Unknown fused_activation_function {}".format(fn_name))
 
-def _test_split(in_shape, axis, num_Splits, dtype):
-    '''internal split tester taking as parameters in_shape, number of tensors to split into
-       and dtype (data type)'''
+
+def _test_split(in_shape, axis, num_splits, dtype):
+    """internal split tester taking as parameters in_shape, number of tensors to split into
+       and dtype (data type)"""
+
     np_data = np.random.uniform(-5, 5, size=in_shape).astype(dtype)
     with tf.Graph().as_default():
-        in_data = array_ops.placeholder(shape=in_shape, dtype=dtype)
-        out = array_ops.split(in_data, num_Splits, axis=axis)
-        out_names = ['out_' + str(n) + ':0' for n in range(num_Splits)]
-        compare_tflite_with_tvm([np_data], ['Placeholder:0'],  [in_data], out,
+        in_data = array_ops.placeholder(shape=in_shape, dtype=dtype, name="in_data")
+        out = array_ops.split(in_data, num_splits, axis=axis)
+        num_splits = len(num_splits) if isinstance(num_splits, list) \
+            else num_splits
+        out_names = ['out_' + str(n) + ':0' for n in range(num_splits)]
+        compare_tflite_with_tvm([np_data], ['in_data'],  [in_data], out,
                                 out_names=out_names)
 
 def test_forward_split():
@@ -252,6 +258,9 @@ def test_forward_split():
     _test_split((1, 6, 3, 5), -3, 3, 'float32')
     _test_split((1, 3, 6, 5), -2, 3, 'float32')
     _test_split((1, 3, 5, 6), -1, 3, 'float32')
+    # size_splits split
+    _test_split((6,), 0, [1, 2, 3], 'float32')
+    _test_split((3, 6, 4), -2, [1, 4, 1], 'float32')
 
 #######################################################################
 # slice
@@ -290,6 +299,79 @@ def test_forward_topk():
     _test_topk((3,), 3)
     _test_topk((3, 5, 7), 3)
     _test_topk((3, 5, 7), 3)
+
+#######################################################################
+# Gather
+# ------
+
+def _test_gather(dshape, indices, axis, dtype, quantized=False, oob=False):
+    """ One iteration of Gather """
+    indices = np.asarray(indices).astype('int32')
+    data = np.random.uniform(1, 10, size=dshape)
+    data = data.astype(np.uint8) if quantized else data.astype(dtype)
+    with tf.Graph().as_default():
+        in_data = array_ops.placeholder(shape=data.shape, dtype=data.dtype, name="in_data")
+        if axis:
+            out = array_ops.gather(in_data, indices, axis=axis)
+        else:
+            out = array_ops.gather(in_data, indices) #tflite conversion fails for None axis
+        input_range = {'in_data': (-100, 100)} if quantized else None
+        try:
+            compare_tflite_with_tvm([data], ['in_data:0'], [in_data], [out],
+                                      quantized=quantized, input_range=input_range)
+        except ValueError as e:
+            if not oob:
+                raise e
+        except Exception as e:
+            raise e
+
+def test_forward_gather():
+    """ GATHER """
+    for quantized in [False, True]:
+        _test_gather((4,), [1], 0, 'float32', quantized)
+        _test_gather((4,), [1], None, 'int32', quantized)
+        _test_gather((1, 4), [0], 0, 'int32', quantized)
+        _test_gather((4,), [[[1, 0], [0, 1]]], 0, 'float32', quantized)
+        _test_gather((2, 2), [[[1, 0], [0, 1]]], 1, 'int32', quantized)
+        _test_gather((2, 2), [[[1, 0], [0, 1]]], None, 'float32', quantized)
+        _test_gather((3, 3, 3),  [[[1, 0]]], 0, 'int32', quantized)
+        _test_gather((3, 3, 3), [[[1, 0]]], 2, 'int32', quantized)
+        _test_gather((4, 3, 5, 6),  [[2, 1, 0, 0]], 0, 'float32', quantized)
+        _test_gather((3, 3, 3), [[[2, 1]]], -1, 'int32', quantized)
+        _test_gather((4,), [16], 0, 'float32', quantized, oob=True)
+        _test_gather((1, 3, 3), [12], 0, 'int32', quantized, oob=True)
+        _test_gather((1, 3, 3), [20], 1, 'float32', quantized, oob=True)
+        _test_gather((1, 3, 3), [20, 20], 2, 'float32', quantized, oob=True)
+
+#######################################################################
+# StridedSlice
+# ------------
+
+def _test_stridedslice(ip_shape, begin, end, stride, dtype,
+                       begin_mask=0, end_mask=0, new_axis_mask=0,
+                       shrink_axis_mask=0, ellipsis_mask=0, quantized=False):
+    """ One iteration of a Stridedslice """
+    data = np.random.uniform(size=ip_shape).astype(dtype)
+    data = data.astype(np.uint8) if quantized else data.astype(dtype)
+    with tf.Graph().as_default():
+        in_data = tf.placeholder(dtype, ip_shape, name="in_data")
+        out = array_ops.strided_slice(in_data, begin, end, stride,
+                                      begin_mask=begin_mask,
+                                      end_mask=end_mask,
+                                      new_axis_mask=new_axis_mask,
+                                      shrink_axis_mask=shrink_axis_mask,
+                                      ellipsis_mask=ellipsis_mask)
+        input_range = {'in_data': (-100, 100)} if quantized else None
+        compare_tflite_with_tvm([data], ['in_data:0'], [in_data], [out], quantized=quantized,
+                                  input_range=input_range)
+
+def test_forward_stridedslice():
+    '''test StridedSlice'''
+    for quantized in [False, True]:
+        _test_stridedslice((2), [1], [1], [1], 'float32', shrink_axis_mask=1, quantized=quantized)
+        _test_stridedslice((3, 4, 3), [1, -1, 0], [4, -5, 3], [2, -1, 1], 'float32', quantized=quantized)
+        _test_stridedslice((3, 4), [1, 0], [4, 4], [1, 1], 'float32', shrink_axis_mask=0, quantized=quantized)
+        _test_stridedslice((4, 4), [1, 0], [4, 4], [1, 1], 'float32', shrink_axis_mask=2, quantized=quantized)
 
 #######################################################################
 # transpose
@@ -486,6 +568,31 @@ def test_forward_pooling():
                       pooling_type=pool_type,
                       dilation_rate=[1, 1],
                       strides=[2, 1])
+
+
+def _test_l2_pool2d(input_shape, ksize, strides, padding, data_format, fused_func_name=None):
+    x = np.arange(np.prod(input_shape), dtype=np.float32).reshape(input_shape) - 1
+
+    with tf.Graph().as_default():
+        in_data = tf.placeholder(
+            dtype=tf.float32, name="input", shape=input_shape)
+        out = tf.sqrt(tf.nn.avg_pool(
+            tf.square(in_data), ksize=ksize, strides=strides,
+            padding=padding, data_format=data_format))
+        out = with_fused_activation_function(out, fused_func_name)
+
+        compare_tflite_with_tvm(x, 'input', [in_data], [out])
+
+
+def test_forward_l2_pool2d():
+    _test_l2_pool2d([1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1], 'SAME', "NHWC", "RELU6")
+    _test_l2_pool2d([2, 9, 10, 2], [1, 1, 1, 1], [1, 1, 1, 1], 'SAME', "NHWC", "RELU6")
+    _test_l2_pool2d([2, 9, 10, 2], [1, 2, 1, 1], [1, 1, 1, 1], 'SAME', "NHWC")
+    _test_l2_pool2d([2, 9, 10, 2], [1, 2, 1, 1], [1, 1, 2, 1], 'SAME', "NHWC")
+    _test_l2_pool2d([1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1], 'VALID', "NHWC", "RELU")
+    _test_l2_pool2d([2, 9, 10, 2], [1, 1, 1, 1], [1, 1, 1, 1], 'VALID', "NHWC")
+    _test_l2_pool2d([2, 9, 10, 2], [1, 2, 1, 1], [1, 1, 1, 1], 'VALID', "NHWC")
+    _test_l2_pool2d([2, 9, 10, 2], [1, 2, 1, 1], [1, 1, 2, 1], 'VALID', "NHWC", "RELU6")
 
 
 #######################################################################
@@ -1078,7 +1185,12 @@ def _test_logical_binary(logical_bin_op, data):
     with tf.Graph().as_default():
         in_data = [array_ops.placeholder(shape=data[0].shape, dtype='bool', name='in_0'),
                    array_ops.placeholder(shape=data[1].shape, dtype='bool', name='in_1')]
-        out = logical_bin_op(in_data[0], in_data[1], name='out')
+        if logical_bin_op == math_ops.logical_not:
+            out = math_ops.logical_or(in_data[0], in_data[1], name='out1')
+            out = logical_bin_op(out, name='out')
+        else:
+            out = logical_bin_op(in_data[0], in_data[1], name='out')
+
         compare_tflite_with_tvm(data, ['in_0:0', 'in_1:0'], in_data, [out])
 
 def _test_forward_logical_and(data):
@@ -1089,6 +1201,10 @@ def _test_forward_logical_or(data):
     """ One iteration of logical or """
     return _test_logical_binary(math_ops.logical_or, data)
 
+def _test_forward_logical_not(data):
+    """ One iteration of logical not """
+    return _test_logical_binary(math_ops.logical_not, data)
+
 def test_all_logical():
     data = [np.random.choice(a=[False, True], size=(2, 3, 4)).astype('bool'),
             np.random.choice(a=[False, True], size=(2, 3, 4)).astype('bool')]
@@ -1096,6 +1212,7 @@ def test_all_logical():
     if package_version.parse(tf.VERSION) >= package_version.parse('1.15.0'):
         _test_forward_logical_and(data)
         _test_forward_logical_or(data)
+        _test_forward_logical_not(data)
 
 #######################################################################
 # Zeros like
@@ -1111,6 +1228,39 @@ def _test_zeros_like(data):
 def test_forward_zeros_like():
     """ ZEROS LIKE """
     _test_zeros_like(np.arange(6.0, dtype=np.float32).reshape((1, 6)))
+
+
+#######################################################################
+# Fill
+# ----
+
+def _test_fill(dims, value_data, value_dtype):
+    """ Use the fill op to create a tensor of value_data with constant dims."""
+
+    value_data = np.array(value_data, dtype=value_dtype)
+    # TF 1.13 TFLite convert method does not accept empty shapes
+    if package_version.parse(tf.VERSION) >= package_version.parse('1.14.0'):
+        with tf.Graph().as_default():
+            value = array_ops.placeholder(dtype=value_dtype, name="value", shape=[])
+            out = tf.fill(dims,  value)
+            compare_tflite_with_tvm([value_data], ["value"], [value], [out])
+
+    with tf.Graph().as_default():
+        input1 = array_ops.placeholder(dtype=value_dtype, name="input1", shape=dims)
+        # Fill op gets converted to static tensor during conversion
+        out = tf.fill(dims,  value_data)
+        out1 = tf.add(out, input1)
+        input1_data = np.random.uniform(0, 5, size=dims).astype(value_dtype)
+        compare_tflite_with_tvm([input1_data], ["input1"], [input1], [out1])
+
+
+def test_forward_fill():
+    """ Test FILL op """
+
+    _test_fill((1, 2, 2, 4), 5, "int32")
+    _test_fill((1, 2, 2, 4), 5, "float32")
+    _test_fill((5, ), 5, "int32")
+
 
 #######################################################################
 # Reduce
@@ -1593,7 +1743,14 @@ def test_detection_postprocess():
                                ["raw_outputs/box_encodings", "raw_outputs/class_predictions"], num_output=4)
     # check valid count is the same
     assert tvm_output[3] == tflite_output[3]
+    # check all the output shapes are the same
+    assert tvm_output[0].shape == tflite_output[0].shape
+    assert tvm_output[1].shape == tflite_output[1].shape
+    assert tvm_output[2].shape == tflite_output[2].shape
     valid_count = tvm_output[3][0]
+    # only check the valid detections are the same
+    # tvm has a different convention to tflite for invalid detections, it uses all -1s whereas
+    # tflite appears to put in nonsense data instead
     tvm_boxes = tvm_output[0][0][:valid_count]
     tvm_classes = tvm_output[1][0][:valid_count]
     tvm_scores = tvm_output[2][0][:valid_count]
@@ -1784,25 +1941,6 @@ def test_forward_qnn_mobilenet_v3_net():
     tvm_sorted_labels = tvm_predictions.argsort()[-3:][::-1]
     tvm.testing.assert_allclose(tvm_sorted_labels, tflite_sorted_labels)
 
-#######################################################################
-# SSD Mobilenet
-# -------------
-
-def test_forward_ssd_mobilenet_v1():
-    """Test the SSD Mobilenet V1 TF Lite model."""
-    # SSD MobilenetV1
-    tflite_model_file = tf_testing.get_workload_official(
-        "https://raw.githubusercontent.com/dmlc/web-data/master/tensorflow/models/object_detection/ssd_mobilenet_v1_coco_2018_01_28_nopp.tgz",
-        "ssd_mobilenet_v1_coco_2018_01_28_nopp.tflite")
-    with open(tflite_model_file, "rb") as f:
-        tflite_model_buf = f.read()
-    np.random.seed(0)
-    data = np.random.uniform(size=(1, 300, 300, 3)).astype('float32')
-    tflite_output = run_tflite_graph(tflite_model_buf, data)
-    tvm_output = run_tvm_graph(tflite_model_buf, data, 'normalized_input_image_tensor', num_output=2)
-    for i in range(2):
-        tvm.testing.assert_allclose(np.squeeze(tvm_output[i]), np.squeeze(tflite_output[i]),
-                                    rtol=1e-5, atol=2e-5)
 
 #######################################################################
 # MediaPipe
@@ -1855,6 +1993,8 @@ if __name__ == '__main__':
     test_forward_squeeze()
     test_forward_slice()
     test_forward_topk()
+    test_forward_gather()
+    test_forward_stridedslice()
     test_forward_depthtospace()
     test_forward_spacetodepth()
 
@@ -1863,6 +2003,7 @@ if __name__ == '__main__':
     test_forward_transpose_conv()
     test_forward_logistic()
     test_forward_pooling()
+    test_forward_l2_pool2d()
     test_forward_softmax()
     test_forward_tanh()
     test_forward_relu()
@@ -1879,6 +2020,9 @@ if __name__ == '__main__':
     # Zeros Like
     test_forward_zeros_like()
 
+    # Fill
+    test_forward_fill()
+
     # Reduce
     test_all_reduce()
 
@@ -1894,7 +2038,6 @@ if __name__ == '__main__':
     test_forward_mobilenet_v3()
     test_forward_inception_v3_net()
     test_forward_inception_v4_net()
-    test_forward_ssd_mobilenet_v1()
     test_forward_mediapipe_hand_landmark()
 
     # End to End quantized

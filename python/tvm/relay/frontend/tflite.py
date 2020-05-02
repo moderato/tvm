@@ -17,6 +17,7 @@
 # pylint: disable=invalid-name, unused-argument, too-many-lines, import-outside-toplevel
 """Tensorflow lite frontend."""
 import math
+import itertools
 import numpy as np
 import tvm
 from tvm.ir import IRModule
@@ -28,7 +29,6 @@ from .. import function as _function
 from .. import op as _op
 from .. import qnn as _qnn
 from ... import nd as _nd
-from .util import get_scalar_from_constant
 from .common import ExprTable
 from .common import infer_shape as _infer_shape
 
@@ -78,19 +78,23 @@ class OperatorConverter(object):
             'ELU': self.convert_elu,
             'EQUAL': self.convert_equal,
             'EXP': self.convert_exp,
+            'FILL': self.convert_fill,
             'FLOOR_DIV': self.convert_floor_div,
             'FLOOR_MOD': self.convert_floor_mod,
             'FLOOR': self.convert_floor,
             'FULLY_CONNECTED': self.convert_fully_connected,
+            'GATHER': self.convert_gather,
             'GREATER_EQUAL': self.convert_greater_equal,
             'GREATER': self.convert_greater,
             'HARD_SWISH': self.convert_hard_swish,
             'L2_NORMALIZATION': self.convert_l2_normalization,
+            'L2_POOL_2D': self.convert_l2_pool2d,
             'LESS_EQUAL': self.convert_less_equal,
             'LESS': self.convert_less,
             'LOCAL_RESPONSE_NORMALIZATION': self.convert_lrn,
             'LOG': self.convert_log,
             'LOGICAL_AND': self.convert_logical_and,
+            'LOGICAL_NOT': self.convert_logical_not,
             'LOGICAL_OR': self.convert_logical_or,
             'LOGISTIC': self.convert_logistic,
             'MAX_POOL_2D': self.convert_max_pool2d,
@@ -121,10 +125,12 @@ class OperatorConverter(object):
             'SPACE_TO_BATCH_ND': self.convert_space_to_batch_nd,
             'SPACE_TO_DEPTH': self.convert_space_to_depth,
             'SPLIT': self.convert_split,
+            'SPLIT_V': self.convert_split_v,
             'SQRT': self.convert_sqrt,
             'SQUARE': self.convert_square,
             'SQUARED_DIFFERENCE': self.convert_squared_difference,
             'SQUEEZE': self.convert_squeeze,
+            'STRIDED_SLICE': self.convert_strided_slice,
             'SUB': self.convert_sub,
             'SUM': self._convert_reduce_sum,
             'TAN': self.convert_tan,
@@ -329,6 +335,10 @@ class OperatorConverter(object):
     def convert_max_pool2d(self, op):
         """Convert TFLite max pool2d"""
         return self.convert_pool2d(op, "max")
+
+    def convert_l2_pool2d(self, op):
+        """Convert TFLite l2 pool2d"""
+        return self.convert_pool2d(op, "l2")
 
     def convert_reshape(self, op):
         """Convert TFLite reshape"""
@@ -983,6 +993,227 @@ class OperatorConverter(object):
         """Convert tflite LOGICAL_OR"""
         return self._convert_logical_binary(_op.logical_or, op)
 
+    def convert_logical_not(self, op):
+        """Convert tflite LOGICAL_NOT"""
+        input_tensors = self.get_input_tensors(op)
+        assert len(input_tensors) == 1, "input tensors length should be 1"
+
+        data = self.get_expr(input_tensors[0].tensor_idx)
+        out = _op.logical_not(data)
+
+        return out
+
+    def convert_gather(self, op):
+        """Method to Convert TFLite GATHER operator"""
+        try:
+            from tflite.BuiltinOptions import BuiltinOptions
+            from tflite.GatherOptions import GatherOptions
+            from tflite.TensorType import TensorType
+        except ImportError:
+            raise ImportError("The tflite package must be installed")
+
+        input_tensors = self.get_input_tensors(op)
+        assert len(input_tensors) == 2, "input tensors length should be 2"
+
+        data = self.get_expr(input_tensors[0].tensor_idx)
+
+        indices = input_tensors[1]
+        indices_type = indices.tensor.Type()
+        assert indices_type in (TensorType.INT32, TensorType.INT64)
+        indices_type_str = self.get_tensor_type_str(indices_type)
+        indices = self.exp_tab.new_const(self.get_tensor_value(indices),
+                                         dtype=indices_type_str)
+
+        assert op.BuiltinOptionsType() == BuiltinOptions.GatherOptions
+        op_options = op.BuiltinOptions()
+        gather_options = GatherOptions()
+        gather_options.Init(op_options.Bytes, op_options.Pos)
+        axis = gather_options.Axis()
+
+        # Check the indices are with in bounds.
+        data_shape = list(input_tensors[0].tensor.ShapeAsNumpy())
+        data_dim = len(data_shape)
+
+        axis_n = axis
+        if axis_n < 0:
+            axis_n += axis_n + data_dim
+        assert axis_n >= 0, "Axis out of bounds"
+        assert axis_n < data_dim, "Axis out of bounds"
+
+        indices_val = self.get_tensor_value(input_tensors[1])
+        indices_shape = list(indices_val.shape)
+        indices_len = len(indices_shape)
+
+        out_shape = []
+        for i in range(data_dim):
+            if axis_n == i:
+                for j in range(indices_len):
+                    out_shape.append(indices_shape[j])
+            else:
+                out_shape.append(data_shape[i])
+
+        loopover = [range(s) for s in out_shape]
+        for idx in list(itertools.product(*loopover)):
+            indices_position = [idx[j] for j in range(axis_n, axis_n+indices_len)]
+
+            real_indices = [idx[j] for j in range(axis_n)]
+            real_indices.append(indices_val[tuple(indices_position)])
+            real_indices.extend([idx[j] for j in range(axis_n + indices_len, len(idx))])
+            for r, d in zip(real_indices, data_shape):
+                if r >= d:
+                    raise ValueError("TFLite out of bound indices are not supported.")
+
+        # Use mode 'fast' since indices are already checked within bounds.
+        out = _op.take(data, indices, axis=axis, mode="fast")
+        return out
+
+    def convert_strided_slice(self, op):
+        """Method to Convert TFLite STRIDED_SLICE operator.
+           NOTE: Eventhough tensorflow supports begin_mask, end_mask, ellipsis_mask, new_axis_mask
+           and shrink_axis_mask, tflite doesn't support these and expect these values to be zero.
+           But in future, they may open up the mask implementation, so kept the implementation
+           same as tensorflow.
+
+           This op extracts a slice of size (end - begin) / stride from the given input tensor.
+           Starting at the location specified by begin the slice continues by adding stride to the
+           index until all dimensions are not less than end. Note that a stride can be negative,
+           which causes a reverse slice.
+
+           For slice input[val0, val1, ..., valn], begin/end/strides will be vectors of length n.
+
+           In each mask field(begin_mask, end_mask, ellipsis_mask, new_axis_mask, shrink_axis_mask)
+           the ith bit will correspond to the ith val.
+
+           If the ith bit of begin_mask is set, begin[i] is ignored and the fullest possible range
+           in that dimension is used instead.
+
+           If the ith bit of ellipsis_mask is set, as many unspecified dimensions as needed will be
+           inserted between other dimensions. Only one non-zero bit is allowed in ellipsis_mask.
+
+           If the ith bit of new_axis_mask is set, then begin, end, and stride are ignored and a
+           new length 1 dimension is added at this point in the output tensor.
+
+           If the ith bit of shrink_axis_mask is set, it implies that the ith specification shrinks
+           the dimensionality by 1, taking on the value at index begin[i]. end[i] and strides[i]
+           are ignored in this case.
+           begin and end are zero-indexed. strides entries must be non-zero.
+
+           TVM Relay implementation of doesn't support mask, so the mask values are processed in
+           this function and begin/end/strides are updated accordingly. If any mask is present, and
+           since tvm doesn't support mask computation directly, the output need a final reshape.
+        """
+        try:
+            from tflite.BuiltinOptions import BuiltinOptions
+            from tflite.StridedSliceOptions import StridedSliceOptions
+        except ImportError:
+            raise ImportError("The tflite package must be installed")
+
+        input_tensors = self.get_input_tensors(op)
+        assert len(input_tensors) == 4, "input tensors length should be 4"
+
+        data_expr = self.get_expr(input_tensors[0].tensor_idx)
+
+        begin = list(self.get_tensor_value(input_tensors[1]))
+        end = list(self.get_tensor_value(input_tensors[2]))
+        stride = list(self.get_tensor_value(input_tensors[3]))
+
+        assert op.BuiltinOptionsType() == BuiltinOptions.StridedSliceOptions
+        op_options = op.BuiltinOptions()
+        options = StridedSliceOptions()
+        options.Init(op_options.Bytes, op_options.Pos)
+        begin_mask = options.BeginMask()
+        end_mask = options.EndMask()
+        ellipsis_mask = options.EllipsisMask()
+        new_axis_mask = options.NewAxisMask()
+        shrink_axis_mask = options.ShrinkAxisMask()
+
+        data_shape = list(input_tensors[0].tensor.ShapeAsNumpy())
+        data_dim = len(data_shape)
+        stride_dim = len(stride)
+        def _transform_mask(stride_dim, ellipsis_mask):
+            """Handle mask inputs to create new begin, end, stride and output shape"""
+            m_begin = [0] * data_dim
+            m_end = [0] * data_dim
+            m_stride = [0] * data_dim
+            fshape_indices = []
+            #Count new axis after ellipsis_mask, consider while applying ellipsis_mask.
+            ellipsis_seen = False
+            new_axes_after_ellipsis = 0
+            for i in range(stride_dim):
+                mask = 1 << i
+                if ellipsis_seen and (mask & new_axis_mask) != 0:
+                    new_axes_after_ellipsis += 1
+                if (mask & ellipsis_mask) != 0:
+                    ellipsis_seen = True
+            if not ellipsis_seen:
+                #Used later for extending the stride attributes in the below loop.
+                ellipsis_mask |= (1 << stride_dim)
+                stride_dim += 1
+            final_index = 0
+            for index in range(stride_dim):
+                mask = 1 << index
+                if mask & ellipsis_mask:
+                    #Identify the end index for applying ellipsis_mask
+                    to_index = min(((data_dim - (stride_dim-index)) + 1 \
+                                     + new_axes_after_ellipsis), data_dim)
+                    for i in range(final_index, to_index):
+                        m_begin[final_index] = 0
+                        m_end[final_index] = data_shape[final_index]
+                        m_stride[final_index] = 1
+                        fshape_indices.append(final_index)
+                        final_index += 1
+                elif mask &new_axis_mask:
+                    fshape_indices.append(-1)
+                elif not mask & new_axis_mask:
+                    if final_index == len(m_begin):
+                        break
+                    if mask & begin_mask:
+                        m_begin[final_index] = data_shape[final_index] \
+                                                     if stride[index] < 0 else 0
+                    elif begin[index]:
+                        m_begin[final_index] = begin[index]
+                    if mask & end_mask:
+                        m_end[final_index] = 0 if stride[index] < 0 \
+                                                 else data_shape[final_index]
+                    elif end[index]:
+                        m_end[final_index] = end[index]
+                    m_stride[final_index] = stride[index]
+                    if mask & shrink_axis_mask:
+                        #Tensorflow make axis with shrink_axis_mask as dimension 1
+                        m_begin[final_index] = data_shape[final_index] + begin[index] \
+                                                 if begin[index] < 0 else begin[index]
+                        m_end[final_index] = begin[index] + 1
+                        m_stride[final_index] = 1
+                        fshape_indices.append(-2)
+                    else:
+                        fshape_indices.append(final_index)
+
+                    final_index += 1
+            return m_begin, m_end, m_stride, fshape_indices
+
+        fshape_indices = None
+        if begin_mask or end_mask or ellipsis_mask or new_axis_mask or shrink_axis_mask:
+            begin, end, stride, fshape_indices = _transform_mask(stride_dim, ellipsis_mask)
+
+        out = _op.strided_slice(data_expr, begin=begin, end=end, strides=stride)
+        out_shape = _infer_shape(out)
+        if not fshape_indices:
+            fshape_indices = range(len(out_shape))
+
+        #Create final output shape.
+        final_output = []
+        for gather_index in fshape_indices:
+            if gather_index == -1:
+                final_output.append(1)
+            elif gather_index == -2:
+                pass
+            else:
+                final_output.append(out_shape[gather_index])
+
+        if not final_output:
+            return out
+        return _op.reshape(out, newshape=tuple(final_output))
+
     def convert_zeros_like(self, op):
         """Convert TFLite ZEROS LIKE"""
         input_tensors = self.get_input_tensors(op)
@@ -991,6 +1222,21 @@ class OperatorConverter(object):
         input_tensor = input_tensors[0]
         in_expr = self.get_expr(input_tensor.tensor_idx)
         out = _op.zeros_like(in_expr)
+
+        return out
+
+    def convert_fill(self, op):
+        """Convert TFLite FILL"""
+        input_tensors = self.get_input_tensors(op)
+        assert len(input_tensors) == 2, "input tensors length should be 2"
+
+        if self.has_expr(input_tensors[0].tensor_idx):
+            raise tvm.error.OpNotImplemented("For dims parameter of Fill operator,"
+                                             " only constant values are supported.")
+
+        in_dims = list(self.get_tensor_value(input_tensors[0]))
+        in_value_expr = self.get_expr(input_tensors[1].tensor_idx)
+        out = _op.full(in_value_expr, in_dims)
 
         return out
 
@@ -1399,6 +1645,35 @@ class OperatorConverter(object):
 
         return out
 
+    def convert_split_v(self, op):
+        """SPLIT_V implementation."""
+        input_tensors = self.get_input_tensors(op)
+
+        assert len(input_tensors) == 3, "input tensors length should be 3"
+
+        input_tensor = input_tensors[0]
+        input_tensor_idx = input_tensor.tensor_idx
+        in_expr = self.get_expr(input_tensor_idx)
+
+        if self.has_expr(input_tensors[1].tensor_idx):
+            raise tvm.error.OpNotImplemented("For size_splits parameter of SPLIT_V operator, "
+                                             "only constant values are supported.")
+        size_splits = list(self.get_tensor_value(input_tensors[1]))
+        size_splits = tuple(np.cumsum(size_splits)[:-1])
+
+        axis_tensor = input_tensors[2]
+        split_axis = self.get_tensor_value(axis_tensor)
+
+        out = _op.split(in_expr, size_splits, axis=int(split_axis))
+        # Relay does not like a TupleWrapper of 1 element, further this
+        # only shows up with tf1.13 if we use a split with num_splits==1.
+        # In tf 1.14 this doesn't appear as it is automatically a reshape
+        # operation.
+        if isinstance(out, _expr.TupleWrapper) and out.size == 1:
+            out = out[0]
+
+        return out
+
     def convert_slice(self, op):
         """Convert TFLite SLICE"""
         input_tensors = self.get_input_tensors(op)
@@ -1557,6 +1832,16 @@ class OperatorConverter(object):
                 assert self.has_same_qnn_params(input_tensor, output_tensor), \
                         "qnn.op.max_pool2d requires input and output qnn params to be same"
             out = _op.nn.max_pool2d(in_expr, **params)
+        elif pool_type == "l2":
+            # L2_POOL_2D is equivalent to square_root(avg_pool(square(in_data)))
+            # TFLite does not have support for quantised L2_POOL_2D op.
+            assert not input_tensor.qnn_params, \
+                "As TFLite does not have support for quantized L2_POOL_2D, \
+                Quantized input is not expected."
+            exp_type = self.get_tensor_type_str(output_tensor.tensor.Type())
+            square_exp = _op.power(in_expr, relay.const(2, exp_type))
+            avg_pool_exp = _op.nn.avg_pool2d(square_exp, **params)
+            out = _op.sqrt(avg_pool_exp)
         else:
             raise tvm.error.OpNotImplemented(
                 'Operator {} is not supported for frontend TFLite.'.format(pool_type + ' pool'))
@@ -1983,6 +2268,7 @@ class OperatorConverter(object):
         assert len(inputs) == 3, "inputs length should be 3"
         cls_pred = self.get_expr(inputs[1].tensor_idx)
         loc_prob = self.get_expr(inputs[0].tensor_idx)
+        batch_size = inputs[1].tensor.Shape(0)
         anchor_values = self.get_tensor_value(inputs[2])
         anchor_boxes = len(anchor_values)
         anchor_type = self.get_tensor_type_str(inputs[2].tensor.Type())
@@ -2010,7 +2296,7 @@ class OperatorConverter(object):
         loc_prob = _op.concatenate(
             [loc_coords[1], loc_coords[0], loc_coords[3], loc_coords[2]], axis=2
         )
-        loc_prob = _op.reshape(loc_prob, [1, anchor_boxes*4])
+        loc_prob = _op.reshape(loc_prob, [batch_size, anchor_boxes*4])
 
         # anchor coords are in yxhw format
         # need to convert to ltrb
@@ -2053,10 +2339,14 @@ class OperatorConverter(object):
         ret = _op.vision.non_max_suppression(ret[0], ret[1], **non_max_suppression_attrs)
         ret = _op.vision.get_valid_counts(ret, 0)
         valid_count = ret[0]
+        # keep only the top 'max_detections' rows
+        ret = _op.strided_slice(ret[1],
+                                [0, 0, 0],
+                                [batch_size, custom_options["max_detections"], anchor_boxes])
         # the output needs some reshaping to match tflite
-        ret = _op.split(ret[1], 6, axis=2)
-        cls_ids = ret[0]
-        scores = ret[1]
+        ret = _op.split(ret, 6, axis=2)
+        cls_ids = _op.reshape(ret[0], [batch_size, -1])
+        scores = _op.reshape(ret[1], [batch_size, -1])
         boxes = _op.concatenate([ret[3], ret[2], ret[5], ret[4]], axis=2)
         ret = _expr.TupleWrapper(_expr.Tuple([boxes, cls_ids, scores, valid_count]), size=4)
         return ret
@@ -2066,6 +2356,17 @@ class OperatorConverter(object):
 
     def has_expr(self, input_tensor_idx):
         return self.exp_tab.has_expr(get_tensor_name(self.subgraph, input_tensor_idx))
+
+
+def get_scalar_from_constant(expr):
+    """ Returns scalar value from Relay constant scalar. """
+    assert isinstance(expr, _expr.Constant) and not expr.data.shape, \
+        "Expr is not a constant scalar."
+    value = expr.data.asnumpy()
+    assert value.dtype == np.dtype(np.int32) or value.dtype == np.dtype(np.float32), \
+        "value must be float32/int32"
+    return np.asscalar(value)
+
 
 def build_str_map(obj):
     """Build string map of TFLite enum int value
@@ -2223,7 +2524,7 @@ def from_tflite(model, shape_dict, dtype_dict):
     Parameters
     ----------
     model:
-        tflite.Model.Model
+        tflite.Model or tflite.Model.Model (depending on tflite version)
 
     shape_dict : dict of str to int list/tuple
         Input shapes of the model.
@@ -2240,12 +2541,18 @@ def from_tflite(model, shape_dict, dtype_dict):
         The parameter dict to be used by relay
     """
     try:
-        import tflite.Model
         import tflite.SubGraph
         import tflite.BuiltinOperator
     except ImportError:
         raise ImportError("The tflite package must be installed")
-    assert isinstance(model, tflite.Model.Model)
+
+    # TFLite.Model.Model has changed to TFLite.Model from 1.14 to 2.1
+    try:
+        import tflite
+        assert isinstance(model, tflite.Model)
+    except TypeError:
+        import tflite.Model
+        assert isinstance(model, tflite.Model.Model)
 
     # keep the same as tflite
     assert model.SubgraphsLength() == 1, "only support one subgraph (main subgraph)"
