@@ -18,20 +18,34 @@
  */
 
 /*!
- *  Optional module when build opencl is switched to off
+ * \file utvm_runtime_enum.h
+ * \brief Defines constants used both on the host and on device.
  */
-#include "../../runtime/opengl/opengl_module.h"
-#include "../source/codegen_source_base.h"
+#ifndef TVM_RUNTIME_MICRO_HOST_DRIVEN_UTVM_RUNTIME_ENUM_H_
+#define TVM_RUNTIME_MICRO_HOST_DRIVEN_UTVM_RUNTIME_ENUM_H_
 
-namespace tvm {
-namespace runtime {
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-Module OpenGLModuleCreate(std::unordered_map<std::string, OpenGLShader> shaders, std::string fmt,
-                          std::unordered_map<std::string, FunctionInfo> fmap) {
-  LOG(WARNING) << "OpenGL runtime not enabled, return a source module...";
-  auto data = ToJSON(shaders);
-  return codegen::DeviceSourceModuleCreate(data, "gl", fmap, "opengl");
-}
+/*!
+ * \brief TODO
+ */
+enum UTVMReturnCode {
+  UTVM_ERR_OK = 0,
+  UTVM_ERR_NOT_FINISHED = -1,
+  UTVM_ERR_TIMER_NOT_IMPLEMENTED = -2,
+  UTVM_ERR_TIMER_OVERFLOW = -3,
+  UTVM_ERR_WS_DOUBLE_FREE = -4,
+  UTVM_ERR_WS_OUT_OF_SPACE = -5,
+  UTVM_ERR_WS_TOO_MANY_ALLOCS = -6,
+  UTVM_ERR_WS_ZERO_SIZE_ALLOC = -7,
+  UTVM_ERR_WS_UNALIGNED_START = -8,
+  UTVM_ERR_WS_UNALIGNED_ALLOC_SIZE = -9,
+};
 
-}  // namespace runtime
-}  // namespace tvm
+#ifdef __cplusplus
+}  // TVM_EXTERN_C
+#endif
+
+#endif  // TVM_RUNTIME_MICRO_HOST_DRIVEN_UTVM_RUNTIME_ENUM_H_

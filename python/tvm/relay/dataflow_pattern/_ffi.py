@@ -1,4 +1,3 @@
-#!/bin/bash
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,29 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+"""DataFlow Pattern Language FFI bindings."""
+import tvm._ffi
 
-set -e
-set -u
-
-export PYTHONPATH=python
-
-cp /emsdk-portable/.emscripten ~/.emscripten
-source /emsdk-portable/emsdk_env.sh
-
-export EM_CONFIG=${HOME}/.emscripten
-export EM_CACHE=${HOME}/.emscripten_cache
-
-echo "Build TVM Web runtime..."
-make web
-
-echo "Prepare test libraries..."
-python tests/web/prepare_test_libs.py
-
-echo "Start testing..."
-
-for test in tests/web/test_*.js; do
-    echo node $test
-    node $test
-done
-
-echo "All tests finishes..."
+tvm._ffi._init_api("relay.dataflow_pattern", __name__)
