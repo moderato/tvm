@@ -17,6 +17,7 @@
 import tvm
 from tvm import relay
 from tvm.relay.dataflow_pattern import *
+from tvm.relay.testing import run_opt_pass
 import numpy as np
 
 # NB: 1 corresponds to the C++ enum that specicfies this
@@ -77,7 +78,7 @@ def test_TypePattern():
     assert ty_pat.type == ttype
 
 def test_AttrPattern():
-    op = is_op('add').has_attr("TOpPattern", K_ELEMWISE)
+    op = is_op('add').has_attr({"TOpPattern": K_ELEMWISE})
     assert isinstance(op, AttrPattern)
     assert op.attrs["TOpPattern"] == K_ELEMWISE
 
@@ -225,19 +226,57 @@ def test_no_match_type():
     ty_pat = has_type(relay.TensorType((10, 10), "float32"))
     assert not ty_pat.match(x)
 
-def test_match_attr():
-    op = is_op('add').has_attr("TOpPattern", K_BROADCAST)
+def test_match_op_attr():
+    op = is_op('add').has_attr({"TOpPattern": K_BROADCAST})
     op_pat = op(wildcard(), wildcard())
     x = relay.var('x')
     y = relay.var('y')
     assert op_pat.match(x + y)
 
-def test_no_match_attr():
-    op = is_op('nn.dense').has_attr("TOpPattern", K_ELEMWISE)
+def test_no_match_op_attr():
+    op = is_op('nn.dense').has_attr({"TOpPattern": K_ELEMWISE})
     op_pat = op(wildcard(), wildcard())
     x = relay.var('x')
     y = relay.var('y')
     assert not op_pat.match(relay.op.nn.dense(x, y))
+    op = is_op('add').has_attr({"TOpPattern": K_BROADCAST})
+    op_pat = op(wildcard(), wildcard())
+    x = relay.var('x')
+    y = relay.var('y')
+    assert not op_pat.match(x - y)
+
+def test_match_func_attr():
+    pattern = wildcard().has_attr({"Composite": "add"})
+    x = relay.var('x')
+    y = relay.var('y')
+    f = relay.Function([x, y], x + y).with_attr("Composite", "add")
+    assert pattern.match(f)
+
+def test_no_match_func_attr():
+    pattern = wildcard().has_attr({"Composite": "add"})
+    x = relay.var('x')
+    y = relay.var('y')
+
+    f = relay.Function([x, y], x + y).with_attr("RandomTest", "add")
+    assert not pattern.match(f)
+    f = relay.Function([x, y], x + y).with_attr("Composite", "conv_bias")
+    assert not pattern.match(f)
+
+def test_match_call_attr():
+    is_conv2d = is_op('nn.conv2d')(wildcard(), wildcard()).has_attr({"data_layout": "NCHW"})
+    x = relay.var('x')
+    y = relay.var('y')
+    assert is_conv2d.match(relay.op.nn.conv2d(x, y))
+
+def test_no_match_call_attr():
+    x = relay.var('x')
+    y = relay.var('y')
+
+    is_conv2d = is_op('nn.conv2d')(wildcard(), wildcard()).has_attr({"data_layout": "NHWC"})
+    assert not is_conv2d.match(relay.op.nn.conv2d(x, y))
+
+    is_conv2d = is_op('nn.conv2d')(wildcard(), wildcard()).has_attr({"RandomAttr": "NCHW"})
+    assert not is_conv2d.match(relay.op.nn.conv2d(x, y))
 
 def test_match_diamond():
     # Pattern
@@ -301,7 +340,7 @@ def test_match_fake_diamond():
 def test_match_dominator():
     # Pattern
     is_conv2d = is_op('nn.conv2d')(wildcard(), wildcard())
-    is_unary_elemwise = (wildcard().has_attr("TOpPattern", K_ELEMWISE))(wildcard())
+    is_unary_elemwise = (wildcard().has_attr({"TOpPattern": K_ELEMWISE}))(wildcard())
     reduction = is_op('add')(wildcard(), wildcard())
     diamond = dominates(is_conv2d, is_unary_elemwise, reduction)
 
@@ -344,7 +383,7 @@ def test_match_dominator():
     
     # Fuzzy path/nested Diamond
     is_conv2d = is_op('nn.conv2d')(wildcard(), wildcard())
-    is_unary_elemwise = (wildcard().has_attr("TOpPattern", K_ELEMWISE))(wildcard()) | is_op('add')(wildcard(), wildcard())
+    is_unary_elemwise = (wildcard().has_attr({"TOpPattern": K_ELEMWISE}))(wildcard()) | is_op('add')(wildcard(), wildcard())
     reduction = is_op('add')(wildcard(), wildcard())
     diamond = dominates(is_conv2d, is_unary_elemwise, reduction)
 
@@ -361,7 +400,7 @@ def test_match_dominator():
 
 def test_not_match_dominator():
     is_conv2d = is_op('nn.conv2d')(wildcard(), wildcard())
-    is_unary_elemwise = (wildcard().has_attr("TOpPattern", K_ELEMWISE))(wildcard())
+    is_unary_elemwise = (wildcard().has_attr({"TOpPattern": K_ELEMWISE}))(wildcard())
     reduction = is_op('add')(wildcard(), wildcard())
     diamond = dominates(is_conv2d, is_unary_elemwise, reduction)
 
@@ -424,6 +463,52 @@ def test_rewrite():
             return post.args[0] - post.args[1]
     out = rewrite(TestRewrite(), x + y)
     assert sub_pattern.match(out)
+
+def test_rewrite_func():
+    x = relay.var('x')
+    w = relay.var('w')
+    y = relay.var('y')
+    add_pattern = is_op('add')(wildcard(), wildcard())
+    sub_pattern = is_op('subtract')(wildcard(), wildcard())
+    class TestRewrite(DFPatternCallback):
+        def __init__(self):
+            self.pattern = add_pattern
+        def callback(self, pre, post, node_map):
+            return post.args[0] - post.args[1]
+    inpf = relay.var("input")
+    weightf = relay.var("weight")
+    func = relay.Function([inpf, weightf], relay.op.nn.relu(relay.op.nn.conv2d(inpf, weightf)), attrs=None)
+    out = rewrite(TestRewrite(), func(x,w) + y)
+    assert sub_pattern.match(out)
+
+def test_nested_rewrite():
+    class PatternCallback(DFPatternCallback):
+        def __init__(self, pattern):
+            self.pattern = pattern
+
+        def callback(self, pre, post, node_map):
+            return post
+
+    def gen():
+        x = relay.var('x')
+        y = relay.var('y')
+        y_add = relay.add(y, y)
+        n0 = relay.add(x, y_add)
+        n1 = relay.add(x, n0)
+        return relay.add(n1, n0)
+
+    def pattern():
+        a = wildcard()
+        b = wildcard()
+        n0 = is_op('add')(a, b)
+        n1 = is_op('add')(n0, a)
+        return is_op('add')(n0, n1)
+
+    out = gen()
+    pat = pattern()
+    new_out = rewrite(PatternCallback(pat), out)
+
+    assert tvm.ir.structural_equal(out, new_out)
 
 def test_not_fuse_multi_diamond():
     # Pattern
@@ -549,7 +634,7 @@ def test_quadruple_rewrite_dominator():
             self.weight = wildcard()
             
             is_conv2d = is_op('nn.conv2d')(self.inp, self.weight)
-            is_unary_elemwise = (wildcard().has_attr("TOpPattern", K_ELEMWISE))(wildcard()) | is_op('add')(wildcard(), wildcard())
+            is_unary_elemwise = (wildcard().has_attr({"TOpPattern": K_ELEMWISE}))(wildcard()) | is_op('add')(wildcard(), wildcard())
             reduction = is_op('add')(wildcard(), wildcard())
             self.pattern = dominates(is_conv2d, is_unary_elemwise, reduction)
 
@@ -673,10 +758,45 @@ def test_algebraic_simplify():
 
     assert tvm.ir.structural_equal(algebraic_simplify((x + zero * y) / one + (y * one) - zero / x), x + y)
 
+def test_double_partition():
+    # Pattern 1
+    conv2d_p = is_op('nn.conv2d')(wildcard(), wildcard())
+    bias_add_p = is_op("nn.bias_add")(conv2d_p, wildcard())
+    relu_p = is_op('nn.relu')(bias_add_p)
+
+    # Graph
+    x = relay.var('input')
+    w = relay.var('weight')
+    b = relay.var('bias')
+    w2 = relay.var('weight')
+    b2 = relay.var('bias')
+    conv2d = relay.op.nn.conv2d(x, w)
+    bias_add = relay.op.nn.bias_add(conv2d, b)
+    relu = relay.op.nn.relu(bias_add)
+    conv2d2 = relay.op.nn.conv2d(relu, w2)
+    bias_add2 = relay.op.nn.bias_add(conv2d2, b2)
+
+    partitioned = bias_add2
+    for pat, label in [(relu_p, "conv_bias_relu"), (bias_add_p, "conv_bias")]:
+        partitioned = pat.partition(partitioned, {"Composite": label})
+
+
+    inpf = relay.var("input")
+    weightf = relay.var("weight")
+    biasf = relay.var("bias")
+    func0 = relay.Function([inpf, weightf, biasf], relay.op.nn.relu(relay.op.nn.bias_add(relay.op.nn.conv2d(inpf, weightf), biasf))).with_attr("Composite", "conv_bias_relu").with_attr("PartitionedFromPattern","nn.conv2d_nn.bias_add_nn.relu_")
+    inpf = relay.var("input")
+    weightf = relay.var("weight")
+    biasf = relay.var("bias")
+    func1 = relay.Function([inpf, weightf, biasf], relay.op.nn.bias_add(relay.op.nn.conv2d(inpf, weightf), biasf)).with_attr("Composite", "conv_bias").with_attr("PartitionedFromPattern","nn.conv2d_nn.bias_add_")
+
+    expected = func1(func0(x, w, b), w2, b2)
+    assert tvm.ir.structural_equal(partitioned, expected)
+
 def test_partition_dominator():
     # Pattern
     is_conv2d = is_op('nn.conv2d')(wildcard(), wildcard())
-    is_unary_elemwise = (wildcard().has_attr("TOpPattern", K_ELEMWISE))(wildcard())
+    is_unary_elemwise = (wildcard().has_attr({"TOpPattern": K_ELEMWISE}))(wildcard())
     reduction = is_op('add')(wildcard(), wildcard())
     diamond = dominates(is_conv2d, is_unary_elemwise, reduction)
 
@@ -692,16 +812,16 @@ def test_partition_dominator():
     out = generate_diamond(inp*inp, weight*weight)
     # Check
     partitioned = diamond.partition(out)
-
+    
     i = relay.Var("input")
     w = relay.Var("weight")
-    f = relay.Function([i, w], generate_diamond(i, w))
+    f = relay.Function([i, w], generate_diamond(i, w)).with_attr("PartitionedFromPattern","nn.conv2d_nn.relu_nn.relu_nn.leaky_relu_add_")
     assert tvm.ir.structural_equal(partitioned, f(inp*inp, weight*weight))
 
 def test_quadruple_partition_dominator():
     # Pattern
     is_conv2d = is_op('nn.conv2d')(wildcard(), wildcard())
-    is_unary_elemwise = (wildcard().has_attr("TOpPattern", K_ELEMWISE))(wildcard()) | is_op('add')(wildcard(), wildcard())
+    is_unary_elemwise = (wildcard().has_attr({"TOpPattern": K_ELEMWISE}))(wildcard()) | is_op('add')(wildcard(), wildcard())
     reduction = is_op('add')(wildcard(), wildcard())
     diamond = dominates(is_conv2d, is_unary_elemwise, reduction)
 
@@ -754,10 +874,16 @@ def test_quadruple_partition_dominator():
                 )
 
     functions = []
-    for f in [classic_diamond, deeper_diamond, single_branch, nested_diamond]:
+    partition_names = [
+        "nn.conv2d_nn.relu_nn.relu_nn.leaky_relu_add_",
+        "nn.conv2d_nn.relu_nn.relu_tanh_nn.leaky_relu_add_",
+        "nn.conv2d_nn.relu_nn.relu_tanh_add_",
+        "nn.conv2d_nn.relu_add_tanh_nn.leaky_relu_add_"
+    ]
+    for i, f in enumerate([classic_diamond, deeper_diamond, single_branch, nested_diamond]):
         inpf = relay.var("input")
         weightf = relay.var("weight")
-        functions.append(relay.Function([inpf, weightf], f(inpf, weightf)))
+        functions.append(relay.Function([inpf, weightf], f(inpf, weightf)).with_attr("PartitionedFromPattern", partition_names[i]))
 
     reference = functions[3](
                     functions[2](
@@ -769,16 +895,17 @@ def test_quadruple_partition_dominator():
                 )
     assert tvm.ir.structural_equal(partitioned, reference)
 
-def get_BN(x, var, mean, beta, gamma, eps = 1e-5):
-    return gamma * (x - mean)/relay.op.sqrt(var + relay.const(eps)) + beta
+def get_BN(x, var, mean, beta, gamma, eps):
+    return gamma * (x - mean)/relay.op.sqrt(var + eps) + beta
 
-def test_parition_batchnorm():
+def test_partition_batchnorm():
     x = relay.var('x')
     var = relay.var('var')
     mean = relay.var('mean')
     beta = relay.var('beta')
     gamma = relay.var('gamma')
-    BN = get_BN(x, var, mean, beta, gamma)
+    eps = relay.const(1e-5)
+    BN = get_BN(x, var, mean, beta, gamma, eps)
 
     
     xf = relay.var('xf')
@@ -786,39 +913,125 @@ def test_parition_batchnorm():
     meanf = relay.var('meanf')
     betaf = relay.var('betaf')
     gammaf = relay.var('gammaf')
+    epsf = relay.var('epsf')
     # Put the arguments in toplogological order for the reference
-    f = relay.Function([gammaf, xf, meanf, varf, betaf], get_BN(xf, varf, meanf, betaf, gammaf))
+    f = relay.Function([gammaf, xf, meanf, varf, epsf, betaf], get_BN(xf, varf, meanf, betaf, gammaf, epsf)).with_attr("PartitionedFromPattern","subtract_multiply_add_sqrt_divide_add_")
 
     partitioned = BatchnormCallback().pattern.partition(BN)
-    assert tvm.ir.structural_equal(partitioned, f(gamma, x, mean, var, beta))
+    assert tvm.ir.structural_equal(partitioned, f(gamma, x, mean, var, eps, beta))
 
-def test_parition_double_batchnorm():
+def test_partition_double_batchnorm():
     x = relay.var('x')
     var = relay.var('var')
     mean = relay.var('mean')
     beta = relay.var('beta')
     gamma = relay.var('gamma')
+    eps = relay.const(1e-5)
     
-    BN = gamma * (x - mean)/relay.op.sqrt(var + relay.const(1e-5)) + beta
-    BN2 = gamma * (BN - mean)/relay.op.sqrt(var + relay.const(1e-5)) + beta
+    BN = gamma * (x - mean)/relay.op.sqrt(var + eps) + beta
+    BN2 = gamma * (BN - mean)/relay.op.sqrt(var + eps) + beta
 
     xf = relay.var('xf')
     varf = relay.var('varf')
     meanf = relay.var('meanf')
     betaf = relay.var('betaf')
     gammaf = relay.var('gammaf')
-    f1 = relay.Function([gammaf, xf, meanf, varf, betaf], get_BN(xf, varf, meanf, betaf, gammaf))
-    # The paritioner doesn't replace duplicates, so we use two copies of the function
+    epsf = relay.var('epsf')
+    f1 = relay.Function([gammaf, xf, meanf, varf, epsf, betaf], get_BN(xf, varf, meanf, betaf, gammaf, epsf)).with_attr("PartitionedFromPattern","subtract_multiply_add_sqrt_divide_add_")
+    # The partitioner doesn't replace duplicates, so we use two copies of the function
     xf2 = relay.var('xf2')
     varf2 = relay.var('varf2')
     meanf2 = relay.var('meanf2')
     betaf2 = relay.var('betaf2')
     gammaf2 = relay.var('gammaf2')
-    f2 = relay.Function([gammaf2, xf2, meanf2, varf2, betaf2], get_BN(xf2, varf2, meanf2, betaf2, gammaf2))
+    epsf2 = relay.var('epsf2')
+    f2 = relay.Function([gammaf2, xf2, meanf2, varf2, epsf2, betaf2], get_BN(xf2, varf2, meanf2, betaf2, gammaf2, epsf2)).with_attr("PartitionedFromPattern","subtract_multiply_add_sqrt_divide_add_")
 
     partitioned = BatchnormCallback().pattern.partition(BN2)
-    reference = f2(gamma, f1(gamma, x, mean, var, beta), mean, var, beta)
+    reference = f2(gamma, f1(gamma, x, mean, var, eps, beta), mean, var, eps, beta)
     assert tvm.ir.structural_equal(partitioned, reference)
+
+def test_partition_check():
+    pattern = is_op("nn.relu")(is_op("nn.conv2d")(wildcard(), wildcard()))
+    def check(pre):
+        return pre.args[0].attrs.data_layout == "NCHW"
+
+    x = relay.var('input')
+    w = relay.var('weight')
+    conv2d = relay.op.nn.conv2d(x, w)
+    relu = relay.op.nn.relu(conv2d)
+
+    xf = relay.var('input')
+    wf = relay.var('weight')
+    conv2df = relay.op.nn.conv2d(xf, wf)
+    reluf = relay.op.nn.relu(conv2df)
+    func = relay.Function([xf, wf], reluf).with_attr("PartitionedFromPattern", "nn.conv2d_nn.relu_")
+
+    reference = func(x, w)
+    partitioned = pattern.partition(relu, check=check)
+    assert tvm.ir.structural_equal(partitioned, reference)
+
+    conv2d = relay.op.nn.conv2d(x, w, data_layout="NHWC")
+    relu = relay.op.nn.relu(conv2d)
+    assert relu == pattern.partition(relu, check=check)
+
+def test_partition_check_types():
+    pattern = is_op("nn.relu")(is_op("nn.conv2d")(wildcard(), wildcard()))
+    def check(pre):
+        conv = pre.args[0]
+        return (conv.attrs.data_layout == "NCHW") and bool(conv.checked_type.shape[0] == 1)
+
+    x = relay.var('input', shape=(1, 10, 10, 10))
+    w = relay.var('weight', shape=(10, 10, 3, 3))
+    conv2d = relay.op.nn.conv2d(x, w)
+    relu = relay.op.nn.relu(conv2d)
+    relu = run_opt_pass(relu, relay.transform.InferType())
+
+    partitioned = pattern.partition(relu, check=check)
+    assert partitioned.op.attrs["PartitionedFromPattern"] == "nn.conv2d_nn.relu_"
+
+    conv2d = relay.op.nn.conv2d(x, w, data_layout="NHWC")
+    relu = relay.op.nn.relu(conv2d)
+    relu = run_opt_pass(relu, relay.transform.InferType())
+    assert relu == pattern.partition(relu, check=check)
+
+    x = relay.var('input', shape=(2, 10, 10, 10))
+    w = relay.var('weight', shape=(10, 10, 3, 3))
+    conv2d = relay.op.nn.conv2d(x, w)
+    relu = relay.op.nn.relu(conv2d)
+    relu = run_opt_pass(relu, relay.transform.InferType())
+    assert relu == pattern.partition(relu, check=check)
+
+def test_partition_option():
+    x = relay.var('x')
+    w = relay.var('w')
+    b = relay.var('b')
+
+    conv2d = is_op('nn.conv2d')(wildcard(), wildcard())
+    bias = conv2d.optional(lambda x: is_op('nn.bias_add')(x, wildcard()))
+    pattern1 = is_op('nn.relu')(bias)
+
+    conv2d = is_op('nn.conv2d')(wildcard(), wildcard())
+    bias = is_op('nn.bias_add')(conv2d, wildcard())
+    pattern2 = bias.optional(lambda x: is_op('nn.relu')(x))
+
+    def conv_bias_relu(x, w, b):
+        conv2d = relay.op.nn.conv2d(x, w)
+        bias_add = relay.op.nn.bias_add(conv2d, b)
+        relu = relay.op.nn.relu(bias_add)
+        return relu
+    relu = conv_bias_relu(x, w, b)
+
+    xf = relay.var('x')
+    wf = relay.var('w')
+    bf = relay.var('b')
+    func = relay.Function([xf, wf, bf], conv_bias_relu(xf, wf, bf)).with_attr("PartitionedFromPattern","nn.conv2d_nn.bias_add_nn.relu_")
+
+    assert pattern1.match(relu)
+    assert tvm.ir.structural_equal(func(x, w, b), pattern1.partition(relu))
+
+    assert pattern2.match(relu)
+    assert tvm.ir.structural_equal(func(x, w, b), pattern2.partition(relu))
 
 if __name__ == "__main__":
     test_match_op()
@@ -838,6 +1051,7 @@ if __name__ == "__main__":
     test_no_match_diamond()
     test_match_fake_diamond()
     test_rewrite()
+    test_nested_rewrite()
     test_fuse_batchnorm()
     test_no_fuse_batchnorm()
     test_fuse_double_batchnorm()
@@ -848,6 +1062,8 @@ if __name__ == "__main__":
     test_algebraic_simplify()
     test_partition_dominator()
     test_quadruple_partition_dominator()
-    test_parition_batchnorm()
-    test_parition_double_batchnorm()
-
+    test_partition_batchnorm()
+    test_partition_double_batchnorm()
+    test_partition_check()
+    test_partition_check_types()
+    test_partition_option()

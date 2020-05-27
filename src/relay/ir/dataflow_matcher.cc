@@ -43,6 +43,7 @@ class DFPatternMatcher : public DFPatternFunctor<bool(const DFPattern&, const Ex
   explicit DFPatternMatcher(const Expr& root_expr) : expr_graph_(CreateIndexedGraph(root_expr)) {}
   bool Match(const DFPattern& pattern, const Expr& expr);
   Map<DFPattern, Array<Expr>> GetMemo() { return Map<DFPattern, Array<Expr>>(memo_); }
+  const IndexedGraph<Expr> expr_graph_;
 
  protected:
   bool VisitDFPattern(const DFPattern& pattern, const Expr& expr) override;
@@ -63,7 +64,6 @@ class DFPatternMatcher : public DFPatternFunctor<bool(const DFPattern&, const Ex
 
   std::unordered_map<DFPattern, Array<Expr>, ObjectHash, ObjectEqual> memo_;
   std::vector<DFPattern> matched_nodes_;
-  IndexedGraph<Expr> expr_graph_;
   bool memoize_ = true;
 };
 
@@ -101,39 +101,72 @@ bool DFPatternMatcher::VisitDFPattern_(const AltPatternNode* op, const Expr& exp
   return VisitDFPattern(op->left, expr) || VisitDFPattern(op->right, expr);
 }
 
+bool MatchRetValue(const ObjectRef& lhs, const TVMRetValue& rhs) {
+  switch (rhs.type_code()) {
+    case kDLInt:
+      if (auto* val = lhs.as<IntImmNode>()) {
+        return val->value == rhs.operator int64_t();
+      }
+      break;
+    case kDLFloat:
+      if (auto* val = lhs.as<FloatImmNode>()) {
+        return val->value == rhs.operator double();
+      }
+      break;
+    case kTVMStr:
+      if (auto* val = lhs.as<tir::StringImmNode>()) {
+        return val->value == rhs.operator std::string();
+      } else if (auto* val = lhs.as<StringObj>()) {
+        return val->data == rhs.operator std::string();
+      }
+      break;
+    default:
+      CHECK(false) << "Unsupported type code in Pattern Node " << rhs.type_code();
+  }
+  return false;
+}
+
 bool DFPatternMatcher::VisitDFPattern_(const AttrPatternNode* attr_pattern, const Expr& expr) {
   bool matches = false;
+  auto attributes = attr_pattern->attrs.as<DictAttrsNode>()->dict;
   if (const auto* op_node = expr.as<OpNode>()) {
     Op op = GetRef<Op>(op_node);
-    auto attributes = attr_pattern->attrs.as<DictAttrsNode>()->dict;
     for (auto kv : attributes) {
       auto attr_name = kv.first;
       auto attr_value = kv.second;
-      auto op_map = Op::GetAttr<TVMRetValue>(attr_name);
+      auto op_map = Op::GetAttrMap<TVMRetValue>(attr_name);
       if (op_map.count(op)) {
-        switch (op_map[op].type_code()) {
-          case kDLInt:
-            if (auto* val = kv.second.as<IntImmNode>()) {
-              matches = val->value == op_map[op].operator int64_t();
-            }
-            break;
-          case kDLFloat:
-            if (auto* val = kv.second.as<FloatImmNode>()) {
-              matches = val->value == op_map[op].operator double();
-            }
-            break;
-          case kTVMStr:
-            if (auto* val = kv.second.as<tir::StringImmNode>()) {
-              matches = val->value == op_map[op].operator std::string();
-            }
-            break;
-          default:
-            CHECK(false) << "Unsupported type in Type Pattern Node";
-        }
+        matches = MatchRetValue(attr_value, op_map[op]);
+      }
+    }
+  } else if (auto* op = expr.as<CallNode>()) {
+    matches = true;
+    // TODO(mbrookhart): When OpNode Attrs move from TVMRetValue to the Object system, remove this
+    // and replace the whole thing with a Visitor-based approach
+    ReflectionVTable* reflection = ReflectionVTable::Global();
+    auto attrs_node = const_cast<Object*>(op->attrs.get());
+    auto attr_names = reflection->ListAttrNames(attrs_node);
+    for (auto kv : attributes) {
+      if (matches &&
+          std::find(attr_names.begin(), attr_names.end(), kv.first) != attr_names.end()) {
+        matches &= MatchRetValue(kv.second, reflection->GetAttr(attrs_node, kv.first));
+      } else {
+        matches = false;
+        break;
+      }
+    }
+  } else if (auto* op = expr.as<FunctionNode>()) {
+    matches = true;
+    for (auto kv : attributes) {
+      if (matches && op->attrs.defined() && op->attrs->dict.count(kv.first)) {
+        matches &= StructuralEqual()(kv.second, op->attrs->dict[kv.first]);
+      } else {
+        matches = false;
+        break;
       }
     }
   }
-  return matches;
+  return matches && VisitDFPattern(attr_pattern->pattern, expr);
 }
 
 Array<DFPattern> reverse(const Array<DFPattern>& args) {
@@ -258,7 +291,7 @@ bool DFPatternMatcher::VisitDFPattern_(const CallPatternNode* op, const Expr& ex
 // Recursively find the Dominator parent along all inputs paths.
 bool DFPatternMatcher::MatchesPath(const DominatorPatternNode* op, const Expr& expr) {
   auto call_node = expr.as<CallNode>();
-  for (auto node : expr_graph_.node_map_[expr]->inputs_) {
+  for (auto node : expr_graph_.node_map_.at(expr)->inputs_) {
     if (!(call_node && node->ref_ == call_node->op)) {
       memoize_ = true;
       if (VisitDFPattern(op->parent, node->ref_)) {
@@ -282,7 +315,7 @@ bool DFPatternMatcher::DominatesParent(const DominatorPatternNode* op, const Exp
   while (!stack.empty()) {
     Expr current = stack.top();
     stack.pop();
-    for (auto node : expr_graph_.node_map_[current]->dominator_children_) {
+    for (auto node : expr_graph_.node_map_.at(current)->dominator_children_) {
       if (visited.count(node->ref_) == 0) {
         if (VisitDFPattern(op->parent, node->ref_)) {
           return true;
@@ -379,13 +412,14 @@ TVM_REGISTER_GLOBAL("relay.dataflow_pattern.match").set_body_typed(MatchPattern)
  * This is primarily needed to support the post-dominator analysis required for dominator pattern
  * matching.
  */
-class PatternGrouper : protected MixedModeVisitor {
+class PatternGrouper {
  public:
   /* \brief Internal Group class for storing analysis */
   struct Group {
     Expr root_node;
     int gid;
     Map<DFPattern, Array<Expr>> matched_nodes;
+    std::string name;
     Function function;
     Array<Expr> args;
   };
@@ -398,23 +432,41 @@ class PatternGrouper : protected MixedModeVisitor {
   const std::vector<Group>& GroupMatches(const DFPattern& pattern, const Expr& pre) {
     groups_ = {Group()};
     gid_assignments_.clear();
-    visit_counter_.clear();
 
     pattern_ = pattern;
     pattern_graph_ = CreateIndexedGraph(pattern_);
     auto matcher = DFPatternMatcher(pre);
     matcher_ = &matcher;
-    this->VisitExpr(pre);
+    this->VisitExprs();
     return this->groups_;
   }
 
  protected:
-  void VisitLeaf(const Expr& pre) override {
-    if (matcher_->Match(pattern_, pre)) {
-      CreateGroup(pre);
+  /* \brief Iteratively traverse the Expression in pre-order to find subgraphs
+   *
+   * If we traverse the graph in post-order, we can run into situtations where a small subgraph will
+   * match the pattern. Due to options like AltPattern, a larger subgraph with more nodes later in
+   * the graph may also match the pattern. With post-order traversal, we mark the smaller subgraph
+   * as matched and fail to catch the larger subgraph. This problem is fixed by using pre-order
+   * traversal.
+   */
+  void VisitExprs() {
+    std::unordered_set<Expr, ObjectHash, ObjectEqual> pre_partitioned;
+    for (size_t i = matcher_->expr_graph_.topological_order_.size(); i != 0; --i) {
+      size_t index = i - 1;
+      Expr current = matcher_->expr_graph_.topological_order_.at(index)->ref_;
+      if (auto op = current.as<FunctionNode>()) {
+        if (op->attrs.defined() && op->attrs->dict.count(attr::kPartitionedFromPattern) != 0) {
+          pre_partitioned.insert(current);
+          PostOrderVisit(op->body,
+                         [&pre_partitioned](const Expr& expr) { pre_partitioned.insert(expr); });
+        }
+      }
+      if (pre_partitioned.count(current) == 0 && matcher_->Match(pattern_, current)) {
+        CreateGroup(current);
+      }
     }
   }
-
   /* \brief Creates a new set of nodes based on Group inputs, used to create functions and perform
    * group overlap analysis */
   class MatchExtractor : public ExprMutator {
@@ -422,6 +474,7 @@ class PatternGrouper : protected MixedModeVisitor {
     explicit MatchExtractor(const std::unordered_map<Expr, Var, ObjectHash, ObjectEqual>& inputs)
         : inputs_(inputs) {}
     const std::unordered_map<Expr, Expr, ObjectHash, ObjectEqual>& GetMemo() { return this->memo_; }
+    const std::string& GetName() { return name_; }
 
    protected:
     Expr VisitExpr(const Expr& pre) override {
@@ -430,6 +483,46 @@ class PatternGrouper : protected MixedModeVisitor {
       }
       return ExprMutator::VisitExpr(pre);
     }
+    Expr VisitExpr_(const TupleNode* op) override {
+      auto out = ExprMutator::VisitExpr_(op);
+      name_ += "Tuple_";
+      return out;
+    };
+    Expr VisitExpr_(const FunctionNode* op) override {
+      auto out = ExprMutator::VisitExpr_(op);
+      name_ += "Function";
+      return out;
+    };
+    Expr VisitExpr_(const CallNode* call_node) override {
+      auto out = ExprMutator::VisitExpr_(call_node);
+      if (auto operation = call_node->op.as<OpNode>()) {
+        name_ += operation->name + "_";
+      } else {
+        name_ += "Call_";
+      }
+      return out;
+    };
+    Expr VisitExpr_(const LetNode* op) override {
+      auto out = ExprMutator::VisitExpr_(op);
+      name_ += "Let_";
+      return out;
+    };
+    Expr VisitExpr_(const IfNode* op) override {
+      auto out = ExprMutator::VisitExpr_(op);
+      name_ += "If_";
+      return out;
+    };
+    Expr VisitExpr_(const TupleGetItemNode* op) override {
+      auto out = ExprMutator::VisitExpr_(op);
+      name_ += "TupleGetItem" + std::to_string(op->index) + "_";
+      return out;
+    };
+    Expr VisitExpr_(const MatchNode* op) override {
+      auto out = ExprMutator::VisitExpr_(op);
+      name_ += "Match_";
+      return out;
+    };
+    std::string name_;
     const std::unordered_map<Expr, Var, ObjectHash, ObjectEqual> inputs_;
   };
 
@@ -464,7 +557,7 @@ class PatternGrouper : protected MixedModeVisitor {
           auto matches = node_map[node->ref_];
           for (auto match : matches) {
             if (fuzzy_matches.count(match) == 0 && match.as<OpNode>() == nullptr &&
-                match.as<FunctionNode>() == nullptr && match.as<ConstantNode>() == nullptr) {
+                match.as<FunctionNode>() == nullptr) {
               inputs[match] = Var(
                   "FunctionVar_" + std::to_string(graph_number_) + "_" + std::to_string(var_number),
                   NullValue<Type>());
@@ -484,10 +577,10 @@ class PatternGrouper : protected MixedModeVisitor {
     auto extractor = MatchExtractor(inputs);
     auto body = extractor.Mutate(expr);
 
-    // Verify the pattern still holds
-    CHECK(DFPatternMatcher(body).Match(pattern_, body));
+    // Verify the pattern still holds, no longer valid if we're not embedding constants in the
+    // graph, keep here for future debug CHECK(DFPatternMatcher(body).Match(pattern_, body));
     group.function = Function(params, body, NullValue<Type>(), Array<TypeVar>());
-
+    group.name = extractor.GetName();
     // Check to make sure we aren't overlapping with another group
     // The MatchExtractor will create a new graph by replacing nodes that match the inputs of the
     // pattern with the input FunctionVar* Variables. The resulting memoization map will only
@@ -612,10 +705,13 @@ TVM_REGISTER_GLOBAL("relay.dataflow_pattern.rewrite").set_body_typed(RewritePatt
  */
 class PatternPartitioner : protected MixedModeMutator {
  public:
-  Expr Partition(const DFPattern& pattern, const Expr& pre) {
+  Expr Partition(const DFPattern& pattern, const Expr& pre,
+                 const Map<std::string, ObjectRef>& attrs, PackedFunc check) {
     auto grouper = PatternGrouper();
     groups_ = grouper.GroupMatches(pattern, pre);
     gid_assignments_ = grouper.GetGIDAssignments();
+    attrs_ = attrs;
+    check_ = check;
     return this->VisitExpr(pre);
   }
 
@@ -625,26 +721,38 @@ class PatternPartitioner : protected MixedModeMutator {
     for (size_t i = 0; i < group.args.size(); ++i) {
       args.push_back(memo_[group.args[i]]);
     }
-    return Call(group.function, args);
+    Function func = WithAttr(group.function, attr::kPartitionedFromPattern, String(group.name));
+    if (!attrs_.empty()) {
+      for (auto kv : attrs_) {
+        func = WithAttr(std::move(func), kv.first, kv.second);
+      }
+    }
+    return Call(func, args);
   }
 
   Expr DispatchVisitExpr(const Expr& pre) override {
     auto post = MixedModeMutator::DispatchVisitExpr(pre);
-    if (gid_assignments_.count(pre) && pre == groups_[gid_assignments_[pre]].root_node) {
+    if (gid_assignments_.count(pre) && pre == groups_[gid_assignments_[pre]].root_node &&
+        static_cast<bool>(check_(pre))) {
       post = RewritePartition(groups_[gid_assignments_[pre]]);
     }
     return post;
   }
 
+  Map<std::string, ObjectRef> attrs_;
   std::vector<PatternGrouper::Group> groups_;
   std::unordered_map<Expr, int, ObjectHash, ObjectEqual> gid_assignments_;
+  PackedFunc check_;
 };
 
-Expr PartitionPattern(DFPattern pattern, Expr expr) {
-  return PatternPartitioner().Partition(pattern, expr);
+Expr PartitionPattern(DFPattern pattern, Expr expr, Map<std::string, ObjectRef> attrs,
+                      PackedFunc check) {
+  return PatternPartitioner().Partition(pattern, expr, attrs, check);
 }
 
-TVM_REGISTER_GLOBAL("relay.dataflow_pattern.partition").set_body_typed(PartitionPattern);
+TVM_REGISTER_GLOBAL("relay.dataflow_pattern.partition")
+    .set_body_typed([](DFPattern pattern, Expr expr, Map<std::string, ObjectRef> attrs,
+                       PackedFunc check) { return PartitionPattern(pattern, expr, attrs, check); });
 
 }  // namespace relay
 }  // namespace tvm

@@ -15,7 +15,7 @@
 # specific language governing permissions and limitations
 # under the License.
 """The Relay Pattern Language and tooling."""
-from tvm.relay import Expr
+from tvm.relay.expr import RelayExpr as Expr
 import tvm._ffi
 from ...ir.base import Node
 from ...ir import make_node
@@ -61,23 +61,20 @@ class DFPattern(Node):
     def __truediv__(self, other):
         return is_op("divide")(self, other)
 
-    def has_attr(self, attr_name: str, attr_value):
+    def has_attr(self, attrs):
         """
         Add an attribute constraint to this pattern
 
         Parameters
         ----------
-        attr_name: str
-            The name of the attribute to match
-        attr_value: Any
-            The value of the attribute to match
+        attrs: Dict[str, Object]
 
         Returns
         -------
         result: tvm.relay.dataflow_pattern.DFPattern
             The resulting AttrPattern
         """
-        attrs = make_node("DictAttrs", **{attr_name: attr_value})
+        attrs = make_node("DictAttrs", **attrs)
         return AttrPattern(self, attrs)
 
     def has_type(self, ttype):
@@ -112,7 +109,7 @@ class DFPattern(Node):
         """
         return match(self, expr)
 
-    def partition(self, expr: Expr) -> bool:
+    def partition(self, expr: Expr, attrs=None, check=lambda x: True) -> Expr:
         """
         Parition the expression into functions defined by this pattern
 
@@ -120,13 +117,18 @@ class DFPattern(Node):
         ----------
         expr : tvm.relay.Expr
             The expression to match.
+        attrs : Optional[Dict[str, Object]]
+            A dictionary of Attribute name/values to add to the paritioned function
+        check : Function
+            A function to perform more complicated checks on the matched expression.
+            Returns true if partitioning should proceed, false otherwise.
 
         Returns
         -------
         result : tvm.relay.Expr
             The Expression with matched subgraphs replaced by function calls to that subgraph
         """
-        return partition(self, expr)
+        return partition(self, expr, attrs, check)
 
     def dominates(self, parent, path=None):
         """
@@ -235,17 +237,17 @@ def has_type(ttype, pattern: DFPattern = None) -> DFPattern:
     return TypePattern(pattern, ttype)
 
 
-def has_attr(attr_name: DFPattern, attr_value, pattern=None) -> DFPattern:
+def has_attr(attrs, pattern=None) -> DFPattern:
     """
     Syntatic sugar for creating an AttrPattern
 
     Parameters
     ----------
-    pattern: tvm.relay.dataflow_pattern.DFPattern
-        The input pattern.
-
-    attrs: tvm.Attrs
+    attrs: Dict[str, Object]
         The attributes to match
+
+    pattern: Optional[tvm.relay.dataflow_pattern.DFPattern]
+        The input pattern.
 
     Returns
     -------
@@ -254,7 +256,7 @@ def has_attr(attr_name: DFPattern, attr_value, pattern=None) -> DFPattern:
     """
     if pattern is None:
         pattern = wildcard()
-    return pattern.has_attr(attr_name, attr_value)
+    return pattern.has_attr(attrs)
 
 
 def dominates(parent: DFPattern, path: DFPattern, child: DFPattern) -> DFPattern:
@@ -562,7 +564,7 @@ def rewrite(callbacks, expr: Expr) -> Expr:
 
     return ffi.rewrite(tmp, expr)
 
-def partition(pattern: DFPattern, expr: Expr) -> Expr:
+def partition(pattern: DFPattern, expr: Expr, attrs=None, check=lambda x: True) -> Expr:
     """
     Parition the expression into a series of functions that match the pattern
 
@@ -572,10 +574,15 @@ def partition(pattern: DFPattern, expr: Expr) -> Expr:
         The pattern to match
     expr : tvm.relay.Expr
         The expression to split into functions
+    attrs : Optional[Dict[str, Object]]
+        A dict of attributes to apply to the partitioned function
+    check : Function
+        A function to perform more complicated checks on the matched expression.
+        Returns true if partitioning should proceed, false otherwise.
 
     Returns
     -------
     result : tvm.relay.Expr
         The Expression with matched subgraphs replaced by function calls to that subgraph
     """
-    return ffi.partition(pattern, expr)
+    return ffi.partition(pattern, expr, attrs, check)
