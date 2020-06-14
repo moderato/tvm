@@ -69,6 +69,18 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
       p->stream << ")";
     });
 
+TVM_REGISTER_NODE_TYPE(ConstantPatternNode);
+
+TVM_REGISTER_GLOBAL("relay.dataflow_pattern.ConstantPattern").set_body_typed([]() {
+  auto c = ConstantPattern(make_object<ConstantPatternNode>());
+  return c;
+});
+
+TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
+    .set_dispatch<ConstantPatternNode>([](const ObjectRef& ref, ReprPrinter* p) {
+      p->stream << "ConstantPattern()";
+    });
+
 CallPattern::CallPattern(DFPattern op, Array<DFPattern> args, Attrs attrs, Array<Type> type_args) {
   ObjectPtr<CallPatternNode> n = make_object<CallPatternNode>();
   n->op = std::move(op);
@@ -173,6 +185,46 @@ TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<TypePatternNode>([](const ObjectRef& ref, ReprPrinter* p) {
       auto* node = static_cast<const TypePatternNode*>(ref.get());
       p->stream << "TypePattern(" << node->pattern << " has type " << node->type << ")";
+    });
+
+ShapePattern::ShapePattern(DFPattern pattern, Array<PrimExpr> shape) {
+  ObjectPtr<ShapePatternNode> n = make_object<ShapePatternNode>();
+  n->pattern = std::move(pattern);
+  n->shape = std::move(shape);
+  data_ = std::move(n);
+}
+
+TVM_REGISTER_NODE_TYPE(ShapePatternNode);
+
+TVM_REGISTER_GLOBAL("relay.dataflow_pattern.ShapePattern")
+    .set_body_typed([](DFPattern pattern, Array<PrimExpr> shape) {
+      return ShapePattern(pattern, shape);
+    });
+
+TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
+    .set_dispatch<ShapePatternNode>([](const ObjectRef& ref, ReprPrinter* p) {
+      auto* node = static_cast<const ShapePatternNode*>(ref.get());
+      p->stream << "ShapePattern(" << node->pattern << " has shape " << node->shape << ")";
+    });
+
+DataTypePattern::DataTypePattern(DFPattern pattern, DataType dtype) {
+  ObjectPtr<DataTypePatternNode> n = make_object<DataTypePatternNode>();
+  n->pattern = std::move(pattern);
+  n->dtype = std::move(dtype);
+  data_ = std::move(n);
+}
+
+TVM_REGISTER_NODE_TYPE(DataTypePatternNode);
+
+TVM_REGISTER_GLOBAL("relay.dataflow_pattern.DataTypePattern")
+    .set_body_typed([](DFPattern pattern, DataType dtype) {
+      return DataTypePattern(pattern, dtype);
+    });
+
+TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
+    .set_dispatch<DataTypePatternNode>([](const ObjectRef& ref, ReprPrinter* p) {
+      auto* node = static_cast<const DataTypePatternNode*>(ref.get());
+      p->stream << "TypePattern(" << node->pattern << " has dtype " << node->dtype << ")";
     });
 
 AttrPattern::AttrPattern(DFPattern pattern, Attrs attrs) {

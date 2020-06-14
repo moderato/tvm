@@ -30,6 +30,8 @@ namespace tvm {
 namespace relay {
 namespace transform {
 
+TVM_REGISTER_PASS_CONFIG_OPTION("relay.fallback_device_type", IntImm);
+
 class FunctionPass;
 
 /*!
@@ -143,7 +145,7 @@ bool FunctionPassNode::SkipFunction(const Function& func) const {
 
 Pass CreateFunctionPass(
     const runtime::TypedPackedFunc<Function(Function, IRModule, PassContext)>& pass_func,
-    int opt_level, const String& name, const tvm::Array<runtime::String>& required) {
+    int opt_level, String name, tvm::Array<String> required) {
   PassInfo pass_info = PassInfo(opt_level, name, required);
   return FunctionPass(pass_func, pass_info);
 }

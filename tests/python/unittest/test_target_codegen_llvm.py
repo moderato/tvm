@@ -34,7 +34,7 @@ def test_llvm_intrin():
     ]
     ib.emit(tvm.tir.Evaluate(
         tvm.tir.Call(
-            "int32", "prefetch", args, tvm.tir.Call.Intrinsic, None, 0)))
+            "int32", "prefetch", args, tvm.tir.Call.Intrinsic)))
     body = ib.get()
 
     mod = tvm.IRModule.from_expr(
@@ -724,7 +724,7 @@ def test_llvm_shuffle():
 
         def _transform(f, *_):
             return f.with_body(
-                tvm.tir.stmt_functor.ir_transform(f.body, None, vectorizer, ['For']))
+                tvm.tir.stmt_functor.ir_transform(f.body, None, vectorizer, ['tir.For']))
 
         return tvm.tir.transform.prim_func_pass(_transform, opt_level=0, name="my_vectorize")
 

@@ -34,6 +34,7 @@ from ..loops import while_loop
 from .common import get_relay_op
 from .common import infer_shape as _infer_shape
 from .common import infer_value as _infer_value
+from .common import infer_value_simulated as _infer_value_simulated
 from .common import infer_type as _infer_type
 from ..prelude import Prelude, StaticTensorArrayOps
 
@@ -152,19 +153,33 @@ def _log1p():
 
 def _arange():
     def _impl(inputs, input_types):
+        def _get_value(val, dtype):
+            if isinstance(val, _expr.Expr):
+                return _op.cast(val, _convert_data_type(dtype))
+            return _create_typed_const(val, dtype)
+
+        def _get_type(val, inp_type):
+            if isinstance(val, _expr.Expr):
+                dtype = str(_infer_type(val).checked_type)
+                return dtype if dtype != "float32" else "float"
+            return inp_type
+
         if len(inputs) == 5:
-            dtype = "float" if "float" in input_types[0:1] else _convert_dtype_value(inputs[1])
-            start = _create_typed_const(0, dtype)
-            stop = _create_typed_const(inputs[0], dtype)
-            step = _create_typed_const(1, dtype)
+            dtype0 = _get_type(inputs[0], input_types[0])
+            dtype = "float" if dtype0 == "float" else _convert_dtype_value(inputs[1])
+            start = _get_value(0, dtype)
+            stop = _get_value(inputs[0], dtype)
+            step = _get_value(1, dtype)
         elif len(inputs) == 7:
-            dtype = "float" if "float" in input_types[0:3] else _convert_dtype_value(inputs[3])
-            start = _create_typed_const(inputs[0], dtype)
-            stop = _create_typed_const(inputs[1], dtype)
-            step = _create_typed_const(inputs[2], dtype)
+            types = [_get_type(inputs[i], input_types[i]) for i in range(3)]
+            dtype = "float" if "float" in types else _convert_dtype_value(inputs[3])
+            start = _get_value(inputs[0], dtype)
+            stop = _get_value(inputs[1], dtype)
+            step = _get_value(inputs[2], dtype)
         else:
             msg = "Unknown number of arguments (%d) to parse." % (len(inputs))
             raise AssertionError(msg)
+
         return _op.transform.arange(start=start,
                                     stop=stop,
                                     step=step,
@@ -196,12 +211,12 @@ def _concatenate(prelude):
         assert axis == 0, "Tensor array concat supported only for axis 0"
         tensor_array, shape = _convert_to_tensor_array(lst, prelude)
         concat_shape = (Any(),) + shape[1:]
-        static_tensor_array_ops = StaticTensorArrayOps(prelude, "float32", shape)
-        static_tensor_array_ops.define_tensor_get_data(concat_shape)
-
         concat = prelude.get_var_static('tensor_array_concat', "float32", shape)
         concatenated = concat(tensor_array)
-        get_tensor = prelude.get_var_static('tensor_get_data', "float32", shape)
+
+        static_tensor_array_ops = StaticTensorArrayOps(prelude, "float32", concat_shape)
+        static_tensor_array_ops.register()
+        get_tensor = prelude.get_var_static('tensor_get_data', "float32", concat_shape)
         return get_tensor(concatenated)
 
     def _impl(inputs, input_types):
@@ -235,15 +250,25 @@ def _slice():
 
         begin = [0] * len(end)
         dim = int(inputs[1])
-        begin[dim] = int(inputs[2])
+        if isinstance(inputs[2], _expr.Call):
+            begin[dim] = np.asscalar(_infer_value(inputs[2], {}).asnumpy().astype(np.int))
+        else:
+            begin[dim] = int(inputs[2])
 
         if isinstance(inputs[3], str) and inputs[3].isdigit():
             end[dim] = min(end[dim], int(inputs[3]))
         else:
-            end[dim] = inputs[3]
+            if isinstance(inputs[3], _expr.Call):
+                end[dim] = np.asscalar(_infer_value(inputs[3], {}).asnumpy().astype(np.int))
+            else:
+                end[dim] = inputs[3]
 
         strides.append(int(inputs[4]))
-        return _op.transform.strided_slice(data, begin, end, strides)
+        return _op.transform.strided_slice(data,
+                                           begin=_expr.const(begin),
+                                           end=_expr.const(end),
+                                           strides=_expr.const(strides),
+                                           slice_mode="size")
     return _impl
 
 def _split():
@@ -456,7 +481,10 @@ def _full():
             msg = "Data type %s could not be parsed in zeros op" % (type(data))
             raise AssertionError(msg)
 
-        dtype = _convert_data_type(_convert_dtype_value(inputs[2]))
+        if inputs[2] is not None: # dtype given
+            dtype = _convert_data_type(_convert_dtype_value(inputs[2]))
+        else:
+            dtype = data.type_annotation.dtype
 
         return _op.full(_expr.const(fill_value), shape, dtype=dtype)
     return _impl
@@ -542,14 +570,13 @@ def _celu():
 
 def _gelu():
     def _impl(inputs, input_types):
-        import math
         data = inputs[0]
-
-        def _pow3(x):
-            return x * x * x
-        return _expr.const(0.5) * data * (_expr.const(1.0) +
-                                          _op.tanh(_expr.const(math.sqrt(2.0 / math.pi)) *
-                                                   (data + _expr.const(0.044715) * _pow3(data))))
+        # gelu is data  * normcdf(data)
+        # normcdf expressed as erf because we don't currently have that intrinsic
+        # note that there is also a fastgelu variant approximating normcdf
+        # with tanh and third order polynomials, but this is "true" gelu
+        return data * (_expr.const(0.5) +
+                       _op.erf(data * _expr.const(0.5**0.5)) * _expr.const(0.5))
     return _impl
 
 def _selu():
@@ -729,17 +756,24 @@ def _convolution():
         if isinstance(dilation, _expr.Expr):
             dilation = _infer_shape(dilation)
 
-        data_layout = "NCHW"
-        kernel_layout = "OIHW"
-        conv_op = _op.nn.conv2d
-
         if use_transpose:
-            assert len(kernel_size) == 2, "ConvTranspose 3D not supported"
-            conv_op = _op.nn.conv2d_transpose
+            if len(kernel_size) == 3:
+                conv_op = _op.nn.conv3d_transpose
+            else:
+                conv_op = _op.nn.conv2d_transpose
+        else:
+            if len(kernel_size) == 3:
+                conv_op = _op.nn.conv3d
+            else:
+                conv_op = _op.nn.conv2d
+
         if len(kernel_size) == 3:
-            conv_op = _op.nn.conv3d
             data_layout = "NCDHW"
             kernel_layout = "OIDHW"
+        else:
+            data_layout = "NCHW"
+            kernel_layout = "OIHW"
+
 
         conv_out = conv_op(data,
                            weight,
@@ -997,7 +1031,10 @@ def _size(prelude):
 def _numtotensor():
     def _impl(inputs, input_types):
         val = inputs[0]
-        dtype = type(val)
+        dtype = input_types[0]
+
+        if isinstance(val, _expr.Expr):
+            return val
 
         if isinstance(val, tvm.tir.IntImm):
             val = val.__int__()
@@ -1019,15 +1056,21 @@ def _view():
         data = inputs[0]
 
         if len(inputs) == 3:
-            new_shape = [inputs[1], _infer_shape(inputs[2])[0]]
+            shape_inp = [inputs[1], _infer_shape(inputs[2])[0]]
         else:
             if isinstance(inputs[1], list):
-                new_shape = inputs[1]
+                shape_inp = inputs[1]
             else:
-                new_shape = _infer_shape(inputs[1])
+                shape_inp = _infer_shape(inputs[1])
+        new_shape = shape_inp
+        for i, shape in enumerate(shape_inp):
+            if isinstance(shape, _expr.Expr):
+                val = _infer_value_simulated(shape, {})
+                new_shape[i] = np.asscalar(val.asnumpy())
 
         return _op.transform.reshape(data, new_shape)
     return _impl
+
 
 def _reshape():
     def _impl(inputs, input_types):
@@ -1141,6 +1184,44 @@ def _reduce(name):
 
     return _impl
 
+def _norm():
+    def _impl(inputs, input_types):
+        data = inputs[0]
+        axis = None
+        keepdims = False
+        if len(inputs) > 3:
+            axis = list(_infer_shape(inputs[2]))
+            keepdims = bool(inputs[3])
+
+        order = inputs[1]
+        if order == np.inf:
+            return _op.reduce.max(_op.abs(data), axis=axis, keepdims=keepdims)
+        elif order == np.NINF:
+            return _op.reduce.min(_op.abs(data), axis=axis, keepdims=keepdims)
+        else:
+            reci_order = _expr.const(1.0 / order)
+            order = _expr.const(order)
+            return _op.power(_op.reduce.sum(_op.power(_op.abs(data), order),
+                                            axis=axis,
+                                            keepdims=keepdims),
+                             reci_order)
+    return _impl
+
+
+def _frobenius_norm():
+    def _impl(inputs, input_types):
+        data = inputs[0]
+        axis = None
+        keepdims = False
+        if len(inputs) > 2:
+            axis = list(_infer_shape(inputs[1]))
+            keepdims = bool(inputs[2])
+
+        return _op.sqrt(_op.reduce.sum((data * data), axis=axis, keepdims=keepdims))
+
+    return _impl
+
+
 def _std():
     def _impl(inputs, input_types):
         data = inputs[0]
@@ -1233,7 +1314,10 @@ def _chunk(prelude):
             end[axis] = i + unif_size
             stride = [1] * len(shape)
 
-            chunk_out = _op.transform.strided_slice(data, begin, end, stride)
+            chunk_out = _op.transform.strided_slice(data,
+                                                    begin=_expr.const(begin),
+                                                    end=_expr.const(end),
+                                                    strides=_expr.const(stride))
             chunks.append(chunk_out)
 
         if dim % num_chunks:
@@ -1243,7 +1327,10 @@ def _chunk(prelude):
             end[axis] = dim
             stride = [1] * len(shape)
 
-            chunk_out = _op.transform.strided_slice(data, begin, end, stride)
+            chunk_out = _op.transform.strided_slice(data,
+                                                    begin=_expr.const(begin),
+                                                    end=_expr.const(end),
+                                                    strides=_expr.const(stride))
             chunks.append(chunk_out)
 
         return chunks
@@ -1339,7 +1426,7 @@ def _none():
         return None
     return _impl
 
-def _pad():
+def _pad(mode):
     def _impl(inputs, input_types):
         data = inputs[0]
         if isinstance(inputs[1], list):
@@ -1364,9 +1451,11 @@ def _pad():
         # group into tuple of 2 ints
         paddings = [paddings[i:i + 2] for i in range(0, len(paddings), 2)]
 
-        pad_value = inputs[2]
+        if mode == "constant":
+            return _op.nn.pad(data, paddings, pad_value=inputs[2], pad_mode=mode)
+        else:
+            return _op.nn.pad(data, paddings, pad_mode=mode)
 
-        return _op.nn.pad(data, paddings, pad_value)
     return _impl
 
 
@@ -1556,6 +1645,14 @@ def _list_len(prelude):
     return _impl
 
 
+def _type_as():
+    def _impl(inputs, input_types):
+        assert len(inputs) == 2
+        assert len(input_types) == 2
+        return _op.cast(inputs[0], _convert_data_type(input_types[1]))
+    return _impl
+
+
 def _add(prelude):
     # add_ is overloaded for tensor add and list concat
     def _impl(inputs, input_types):
@@ -1568,14 +1665,14 @@ def _add(prelude):
 def _tensor_array_stack(prelude):
     def _impl(inputs, input_types):
         tensor_array, shape = _convert_to_tensor_array(inputs[0], prelude)
+
+        stacked_shape = (Any(),) + shape
         stack = prelude.get_var_static('tensor_array_stack', "float32", shape)
         stacked = stack(tensor_array)
 
-        stacked_shape = (Any(),) + shape
-        static_tensor_array_ops = StaticTensorArrayOps(prelude, "float32", shape)
-        static_tensor_array_ops.define_tensor_get_data(stacked_shape)
-        # passing stacked_shape below gives "'Prelude' object has no attribute" error
-        get_tensor = prelude.get_var_static('tensor_get_data', "float32", shape)
+        static_tensor_array_ops = StaticTensorArrayOps(prelude, "float32", stacked_shape)
+        static_tensor_array_ops.register()
+        get_tensor = prelude.get_var_static('tensor_get_data', "float32", stacked_shape)
         return get_tensor(stacked)
     return _impl
 
@@ -1621,22 +1718,6 @@ def _one_hot():
         off_value = tvm.relay.const(0.0, dtype)
 
         return _op.one_hot(indices, on_value, off_value, num_classes, -1, dtype)
-    return _impl
-
-
-def _reflection_pad2d():
-    def _impl(inputs, input_types):
-        if isinstance(inputs[1], list):
-            pad_list = inputs[1]
-        else:
-            pad_list = list(_infer_shape(inputs[1]))
-        padding_left = pad_list[0]
-        padding_right = pad_list[1]
-        padding_top = pad_list[2]
-        padding_bottom = pad_list[3]
-        paddings = [[0, 0], [0, 0], [padding_top, padding_bottom], [padding_left, padding_right]]
-
-        return _op.nn.mirror_pad(inputs[0], paddings, mode='REFLECT')
     return _impl
 
 
@@ -1730,6 +1811,7 @@ def _get_convert_map(prelude):
         "aten::arange"                          : _arange(),
         "aten::div"                             : _elemwise("divide"),
         "aten::div_"                            : _elemwise("divide"),
+        "aten::floor_divide"                    : _elemwise("floor_divide"),
         "aten::addcdiv"                         : _addcdiv(),
         "aten::addcmul"                         : _addcmul(),
         "aten::ones"                            : _ones(),
@@ -1805,12 +1887,20 @@ def _get_convert_map(prelude):
         "aten::Int"                             : _int(),
         "prim::NumToTensor"                     : _numtotensor(),
         "prim::ImplicitTensorToNum"             : _tensortonum(),
-        "aten::constant_pad_nd"                 : _pad(),
+        "aten::ScalarImplicit"                  : _tensortonum(),
+        "aten::constant_pad_nd"                 : _pad("constant"),
+        "aten::reflection_pad1d"                : _pad("reflect"),
+        "aten::reflection_pad2d"                : _pad("reflect"),
+        "aten::replication_pad1d"               : _pad("edge"),
+        "aten::replication_pad2d"               : _pad("edge"),
+        "aten::replication_pad3d"               : _pad("edge"),
         "aten::permute"                         : _transpose(prelude),
         "aten::sum"                             : _reduce("sum"),
         "aten::prod"                            : _reduce("prod"),
         "aten::argmin"                          : _reduce("argmin"),
         "aten::argmax"                          : _reduce("argmax"),
+        "aten::norm"                            : _norm(),
+        "aten::frobenius_norm"                  : _frobenius_norm(),
         "aten::std"                             : _std(),
         "aten::var"                             : _variance(),
         "aten::abs"                             : _unary("abs"),
@@ -1838,6 +1928,7 @@ def _get_convert_map(prelude):
         "aten::floor"                           : _unary("floor"),
         "aten::round"                           : _unary("round"),
         "aten::isfinite"                        : _unary("isfinite"),
+        "aten::isinf"                           : _unary("isinf"),
         "aten::isnan"                           : _unary("isnan"),
         "aten::clamp"                           : _clamp(),
         "aten::detach"                          : _identity(),
@@ -1864,13 +1955,13 @@ def _get_convert_map(prelude):
         "aten::embedding"                       : _embedding(),
         "aten::one_hot"                         : _one_hot(),
         "aten::mm"                              : _matmul(prelude),
-        "aten::reflection_pad2d"                : _reflection_pad2d(),
         "relay::tensor_array_stack"             : _tensor_array_stack(prelude),
         "aten::add"                             : _add(prelude),
         "aten::add_"                            : _add(prelude),
         "aten::stack"                           : _tensor_array_stack(prelude),
         "aten::__getitem__"                     : _list_getitem(prelude),
         "aten::len"                             : _list_len(prelude),
+        "aten::type_as"                         : _type_as(),
     }
     return convert_map
 
