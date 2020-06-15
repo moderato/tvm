@@ -237,6 +237,9 @@ class XGBoostCostModel(CostModel):
             raise RuntimeError("Invalid feature type: " + self.fea_type)
         res = pool.map(feature_extract_func, data)
 
+        # filter out None results
+        res = [r for r in res if r]
+
         # filter out feature with different shapes
         fea_len = len(self._get_feature([0])[0])
 
