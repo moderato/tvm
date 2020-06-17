@@ -130,7 +130,7 @@ class VirtualAxis(TransformSpace):
         self.name = name
         if isinstance(var, (int, _long)):
             self.length = var
-            if name is None:
+            if self.name is None:
                 self.name = 'axis_%d' % VirtualAxis.name_ct
                 VirtualAxis.name_ct += 1
         elif isinstance(var, schedule.IterVar):
