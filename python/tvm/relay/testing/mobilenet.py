@@ -51,7 +51,10 @@ def separable_conv_block(data, name, depthwise_channels, pointwise_channels,
     else:
         strides = (1, 1)
     # depthwise convolution + bn + relu
-    wshape = (depthwise_channels, 1) + kernel_size
+    if layout == 'NCHW':
+        wshape = (1, depthwise_channels) + kernel_size # OIHW / MIHW
+    else: # temporary assuming 'NHWC'
+        wshape = kernel_size + (depthwise_channels, 1) # HWIO / HWIM
     weight = relay.var(name + "_weight", shape=wshape, dtype=dtype)
     conv1 = layers.conv2d(
         data=data,

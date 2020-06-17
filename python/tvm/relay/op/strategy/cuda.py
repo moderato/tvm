@@ -199,7 +199,7 @@ def conv2d_strategy_cuda(attrs, inputs, out_type, target):
                 wrap_topi_schedule(topi.cuda.schedule_depthwise_conv2d_nchw),
                 name="depthwise_conv2d_nchw.cuda")
         elif layout == "NHWC":
-            assert kernel_layout == "HWOI"
+            assert kernel_layout == "HWIO" # In my fork I use HWIO for depthwise as well
             strategy.add_implementation(
                 wrap_compute_conv2d(topi.cuda.depthwise_conv2d_nhwc),
                 wrap_topi_schedule(topi.cuda.schedule_depthwise_conv2d_nhwc),
