@@ -69,7 +69,7 @@ def compute_sparse_dense(attrs, inputs, out_type):
     """Compute definition of sparse_dense"""
     return [topi.nn.sparse_dense(inputs[0], inputs[1], inputs[2], inputs[3])]
 
-reg.register_schedule("nn.sparse_dense", strategy.schedule_sparse_dense)
+reg.register_strategy("nn.sparse_dense", strategy.sparse_dense_strategy)
 reg.register_pattern("nn.sparse_dense", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 
 
@@ -170,6 +170,7 @@ def convert_conv2d(attrs, inputs, tinfos, desired_layouts):
 # conv2d_transpose
 reg.register_strategy("nn.conv2d_transpose", strategy.conv2d_transpose_strategy)
 reg.register_pattern("nn.conv2d_transpose", OpPattern.OUT_ELEMWISE_FUSABLE)
+
 
 @reg.register_legalize("nn.conv2d_transpose")
 def legalize_conv2d_transpose(attrs, inputs, types):
@@ -440,12 +441,42 @@ def compute_mirror_pad(attrs, inputs, out_dtype):
 reg.register_broadcast_schedule("nn.mirror_pad")
 
 
+@script
+def _mirror_pad_func(data_shape, pad_width):
+    out = output_tensor((data_shape.shape[0],), "int64")
+    for i in const_range(data_shape.shape[0]):
+        out[i] = data_shape[i] + int64(pad_width[i][0]) + int64(pad_width[i][1])
+    return out
+
+@reg.register_shape_func("nn.mirror_pad", False)
+def mirror_pad_func(attrs, inputs, _):
+    pad_width_tuple = [get_const_tuple(p) for p in attrs.pad_width]
+    return [_mirror_pad_func(inputs[0], convert(pad_width_tuple))]
+
+
 # conv2d_winograd related operators
 reg.register_strategy("nn.contrib_conv2d_winograd_without_weight_transform",
                       strategy.conv2d_winograd_without_weight_transfrom_strategy)
 reg.register_pattern("nn.contrib_conv2d_winograd_without_weight_transform",
                      OpPattern.OUT_ELEMWISE_FUSABLE)
 
+# conv2d_gemm related operators
+reg.register_strategy("nn.contrib_conv2d_gemm_without_weight_transform",
+                      strategy.conv2d_gemm_without_weight_transform_strategy)
+reg.register_pattern("nn.contrib_conv2d_gemm_without_weight_transform",
+                     OpPattern.OUT_ELEMWISE_FUSABLE)
+
+@reg.register_compute("nn.contrib_conv2d_gemm_weight_transform")
+def compute_contrib_conv2d_gemm_weight_transform(attrs, inputs, out_dtype):
+    """Compute definition of contrib_conv2d_gemm_weight_transform"""
+    out = topi.nn.conv2d_gemm_weight_transform(
+        inputs[0], attrs.tile_rows, attrs.tile_cols)
+    return [out]
+
+reg.register_schedule("nn.contrib_conv2d_gemm_weight_transform",
+                      strategy.schedule_conv2d_gemm_weight_transform)
+reg.register_pattern("nn.contrib_conv2d_gemm_weight_transform",
+                     OpPattern.OUT_ELEMWISE_FUSABLE)
 
 @reg.register_compute("nn.contrib_conv2d_winograd_weight_transform")
 def compute_contrib_conv2d_winograd_weight_transform(attrs, inputs, out_dtype):

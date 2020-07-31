@@ -303,7 +303,6 @@ class TIRTextPrinter : public StmtFunctor<Doc(const Stmt&)>,
   Doc VisitStmt_(const BufferStoreNode* op) override;
   Doc VisitStmt_(const BufferRealizeNode* op) override;
   Doc VisitStmt_(const AllocateNode* op) override;
-  Doc VisitStmt_(const FreeNode* op) override;
   Doc VisitStmt_(const IfThenElseNode* op) override;
   Doc VisitStmt_(const SeqStmtNode* op) override;
   Doc VisitStmt_(const EvaluateNode* op) override;
@@ -321,6 +320,7 @@ class TIRTextPrinter : public StmtFunctor<Doc(const Stmt&)>,
   Doc PrintIterVar(const IterVarNode* op);
   Doc PrintRange(const RangeNode* op);
   Doc PrintBuffer(const BufferNode* op);
+  Doc BufferNode2Doc(const BufferNode* op, Doc doc);
   Doc PrintString(const StringObj* op) { return Doc::StrLiteral(op->data); }
 
   /*!
