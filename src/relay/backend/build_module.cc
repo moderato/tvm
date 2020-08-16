@@ -152,6 +152,11 @@ class RelayBuildModule : public runtime::ModuleNode {
         CHECK_EQ(args.num_args, 2);
         *rv = this->Optimize(args[0], args[1], this->params_);
       });
+    } else if (name == "generate_code") {
+      return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) {
+        CHECK_EQ(args.num_args, 2);
+        this->GenerateCode(args[0], args[1]);
+      });
     } else {
       LOG(FATAL) << "Unknown packed function: " << name;
       return PackedFunc([sptr_to_self, name](TVMArgs args, TVMRetValue* rv) {});
@@ -409,21 +414,17 @@ class RelayBuildModule : public runtime::ModuleNode {
   }
 
   /*!
-   * \brief Compile a Relay IR module to runtime module.
+   * \brief Generate code from IR module. (Split from function BuildRelay)
    *
    * \param relay_module The Relay IR module.
-   * \param params The parameters.
    */
-  void BuildRelay(IRModule relay_module,
-                  const std::unordered_map<std::string, tvm::runtime::NDArray>& params) {
-    // Relay IRModule -> IRModule optimizations.
-    relay_module = Optimize(relay_module, targets_, params);
+  void GenerateCode(IRModule relay_module, const TargetsMap& targets) {
     // Get the updated function.
     auto func = Downcast<Function>(relay_module->Lookup("main"));
 
     // Generate code for the updated function.
     graph_codegen_ = std::unique_ptr<GraphCodegen>(new GraphCodegen());
-    graph_codegen_->Init(nullptr, targets_);
+    graph_codegen_->Init(nullptr, targets);
     graph_codegen_->Codegen(func);
 
     ret_.graph_json = graph_codegen_->GetJSON();
@@ -461,6 +462,21 @@ class RelayBuildModule : public runtime::ModuleNode {
       ret_.mod = tvm::codegen::CreateMetadataModule(ret_.params, ret_.mod, ext_mods);
     }
   }
+
+
+  /*!
+   * \brief Compile a Relay IR module to runtime module.
+   *
+   * \param relay_module The Relay IR module.
+   * \param params The parameters.
+   */
+  void BuildRelay(IRModule relay_module,
+                  const std::unordered_map<std::string, tvm::runtime::NDArray>& params) {
+    // Relay IRModule -> IRModule optimizations.
+    relay_module = Optimize(relay_module, targets_, params);
+    GenerateCode(relay_module, targets_);
+  }
+
 
  private:
   Target GetTargetHost() {
