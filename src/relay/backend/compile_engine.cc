@@ -225,11 +225,12 @@ class ScheduleGetter : public backend::MemoizedExprTranslator<Array<te::Tensor>>
     }
 
     int op_pattern = fpattern[op];
-    if (op_pattern >= kCommReduce) {
-      CHECK(!master_op_.defined() || master_op_pattern_ < kCommReduce)
-          << "Two complicated op in a primitive function "
-          << " master=" << master_op_ << " current=" << op;
-    }
+    // // Enable complex group fusion by commenting this check
+    // if (op_pattern >= kCommReduce) {
+    //   CHECK(!master_op_.defined() || master_op_pattern_ < kCommReduce)
+    //       << "Two complicated op in a primitive function "
+    //       << " master=" << master_op_ << " current=" << op;
+    // }
     if (op_pattern >= master_op_pattern_) {
       master_op_ = op;
       master_attrs_ = call_node->attrs;

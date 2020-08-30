@@ -105,6 +105,20 @@ inline Expr TransformF(const std::function<Expr(const Expr&)>& func, const Expr&
 }
 
 /*!
+ * \brief Check if a call has the provided name. (Copied from IsOp() in tvm/relay/backend/utils.h)
+ * \param call A Relay call node.
+ * \param op_name The name of the expected call.
+ * \return true if the call's name is equivalent to the given name. Otherwise,
+ * false.
+ */
+inline bool IsOpName(const CallNode* call, const std::string& op_name) {
+  const auto* op_node = call->op.as<OpNode>();
+  CHECK(op_node) << "Expects a single op.";
+  Op op = GetRef<Op>(op_node);
+  return op == Op::Get(op_name);
+}
+
+/*!
  * \brief Decide whether the expression atomic or not?
  * \param e the expression
  * \return

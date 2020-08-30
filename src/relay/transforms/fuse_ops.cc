@@ -122,7 +122,7 @@ class IndexedForwardGraph {
   std::vector<Node*> post_dfs_order;
 
   /*! \brief Dump the graph into string. */
-  void DebugDump() {
+  void DebugDump() const {
     std::ostringstream os;
     for (size_t i = 0; i < post_dfs_order.size(); ++i) {
       Node* node = post_dfs_order[i];
@@ -134,6 +134,10 @@ class IndexedForwardGraph {
     }
     LOG(INFO) << os.str();
   }
+  void DebugDump() {
+    return const_cast<const IndexedForwardGraph*>(this)->DebugDump();
+  }
+
   /*!
    * \brief create a indexed forward graph.
    * \param arena The arena used for data allocation.
@@ -592,9 +596,10 @@ class GraphPartitioner {
   }
   // Combine two patterns together.
   static OpPatternKind CombinePattern(OpPatternKind lhs, OpPatternKind rhs) {
-    if (lhs > kBroadcast && rhs > kBroadcast) {
-      LOG(FATAL) << "Cannot merge two complex group together";
-    }
+    // // Enable complex group fusion by commenting this check
+    // if (lhs > kBroadcast && rhs > kBroadcast) {
+    //   LOG(FATAL) << "Cannot merge two complex group together";
+    // }
     if (lhs > rhs) return lhs;
     return rhs;
   }
@@ -612,7 +617,21 @@ class GraphPartitioner {
     child->parent = parent;
     // update master ref and pattern
     if (child->master_ref != nullptr) {
-      CHECK(parent->master_ref == nullptr);
+      // std::cout << "^^^^^^^ MergeFromTo debug:" << std::endl;
+      // auto c = GetRef<ObjectRef>(child->master_ref);
+      // auto n1 = c.as<CallNode>();
+      // auto op1 = n1->op.as<OpNode>();
+      // std::cout << op1->name << ", " << std::endl;
+      // if (parent->master_ref != nullptr) {
+      //   auto p = GetRef<ObjectRef>(parent->master_ref);
+      //   auto n2 = p.as<CallNode>();
+      //   auto op2 = n2->op.as<OpNode>();
+      //   std::cout << op2->name << ", " << std::endl;
+      // }
+      // std::cout << "^^^^^^^" << std::endl;
+
+      // // Enable complex group fusion by commenting this check
+      // CHECK(parent->master_ref == nullptr);
       parent->master_ref = child->master_ref;
       parent->pattern = CombinePattern(child->pattern, parent->pattern);
     }
@@ -661,6 +680,7 @@ class GraphPartitioner {
 
   // execute the fusion algorithm.
   void RunFuse(const IndexedForwardGraph& graph, const DominatorTree& post_dom_tree, int phase) {
+    bool p = true;
     for (size_t nid = 0; nid < groups_.size(); ++nid) {
       // the group of current node has been specified already.
       auto* graph_node = graph.post_dfs_order[nid];
@@ -696,6 +716,70 @@ class GraphPartitioner {
         continue;
       }
 
+      // **************************** Fuse two tuples of (conv2d + bn + relu)
+      if (phase == 3) {
+        if (p) {
+          // DebugDump();
+          p = false;
+        }
+
+        // To be fused:
+        // graph_node (current node in post dfs order) and dom_node's parent (current node in post_dom_tree)
+        auto obj_gn = GetRef<ObjectRef>(graph_node->ref);
+        auto obj_dn = GetRef<ObjectRef>(dom_node->gnode->ref);
+        auto obj_dn_parent = GetRef<ObjectRef>(dom_node->parent->gnode->ref);
+        auto gn = obj_gn.as<CallNode>();
+        auto dn = obj_dn.as<CallNode>();
+        auto dnp = obj_dn_parent.as<CallNode>();
+        auto gn_op = gn->op.as<OpNode>();
+        auto dn_op = dn->op.as<OpNode>();
+        auto dnp_op = dnp->op.as<OpNode>();
+
+        // Detect conv2d and search UPWARDS
+        if (dnp_op->name == "nn.conv2d") {
+          // os << "phase 3: " << gn_op->name << graph_node->index << ", " << dn_op->name << dom_node->gnode->index << ", " << dnp_op->name << dom_node->parent->gnode->index << "\n";
+          // Get conv2d attributes
+          auto conv_attr = dnp->attrs.as<Conv2DAttrs>();
+          // NULL when gn is the first op and args[0] is a VarNode
+          auto last_op = gn;
+
+          // Only proceed when:
+          // - last_op is a CallNode, and 
+          // - is a normal convolution
+          bool fuse = false;
+          if (last_op != nullptr && conv_attr->groups == 1) {
+            if (IsOpName(last_op, "nn.conv2d")) {
+              fuse = true;
+              std::cout << "1 Yes we fuse! (" << graph_node->index << ", " << dom_node->parent->gnode->index << ")" << std::endl;
+            } else if (IsOpName(last_op, "nn.relu")) {
+              last_op = last_op->args[0].as<CallNode>();
+              if (IsOpName(last_op, "add")) {
+                last_op = last_op->args[0].as<CallNode>();
+                if (IsOpName(last_op, "multiply")) {
+                  last_op = last_op->args[0].as<CallNode>();
+                  conv_attr = last_op->attrs.as<Conv2DAttrs>();
+                  if (IsOpName(last_op, "nn.conv2d") && conv_attr->groups > 1) {
+                    fuse = true;
+                    std::cout << "2 Yes we fuse! (" << graph_node->index << ", " << dom_node->parent->gnode->index << ")" << std::endl;
+                  }
+                }
+              }
+            }
+          }
+
+          //
+          if (fuse) {
+            // std::cout << "@@@@@@@" << std::endl;
+            auto fcond = [](OpPatternKind kind, bool is_sink) { return true; };
+            if (CheckPath(graph_node, dom_node->parent->gnode, fcond)) {
+              CommitFuse(graph_node, dom_node->parent->gnode);
+            }
+            // std::cout << "@@@@@@@" << std::endl;
+          }
+        }
+        continue;
+      }
+
       // Skip if current node is already fused to the parent.
       if (groups_[dom_parent_gindex] != nullptr &&
           group_node->FindRoot() == groups_[dom_parent_gindex]->FindRoot()) {
@@ -713,6 +797,7 @@ class GraphPartitioner {
           // The fuse can be executed if all the intermediate ops are still broadcast.
           auto fcond = [](OpPatternKind kind, bool is_sink) { return kind <= kBroadcast; };
           if (CheckPath(graph_node, dom_node->parent->gnode, fcond)) {
+            std::cout << "Fuse at condition 1 (phase " << phase << ")" << std::endl;
             CommitFuse(graph_node, dom_node->parent->gnode);
           }
         }
@@ -733,6 +818,7 @@ class GraphPartitioner {
             }
           };
           if (CheckPath(graph_node, dom_node->parent->gnode, fcond)) {
+            std::cout << "Fuse at condition 2 (phase " << phase << ")" << std::endl;
             CommitFuse(graph_node, dom_node->parent->gnode);
           }
         }
@@ -743,6 +829,7 @@ class GraphPartitioner {
         // Check if all path are injective.
         auto fcond = [](OpPatternKind kind, bool is_sink) { return kind <= kInjective; };
         if (CheckPath(graph_node, dom_node->parent->gnode, fcond)) {
+          std::cout << "Fuse at condition 3 (phase " << phase << ")" << std::endl;
           CommitFuse(graph_node, dom_node->parent->gnode);
         }
       } else {
@@ -750,6 +837,82 @@ class GraphPartitioner {
         CHECK(group_node->pattern == kCommReduce);
       }
     }
+  }
+
+  // Debug fusion.
+  void DebugDump() const {
+    std::ostringstream os;
+    std::vector<std::tuple<int, std::vector<Group*> > > collection;
+    // Construct unions
+    for (size_t i = 0; i < groups_.size(); ++i) {
+      Group* gn = groups_[i];
+      bool found = false;
+      for (size_t j = 0; j < collection.size(); ++j) {
+        if (gn->FindRoot() == std::get<1>(collection[j])[0]->FindRoot()) {
+          std::get<1>(collection[j]).push_back(gn);
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        std::vector<Group*> tmp;
+        tmp.push_back(gn);
+        auto t = std::make_tuple(i, tmp);
+        collection.push_back(t);
+      }
+    }
+
+    // Print the info of every union
+    for (size_t i = 0; i < collection.size(); ++i) {
+      os << "\n**** Group " << i << ", master pattern: " << std::get<1>(collection[i])[0]->FindRoot()->pattern;
+      for (size_t j = 0; j < std::get<1>(collection[i]).size(); ++j) {
+        // os << "\nno.: " << std::get<0>(collection[i]) << ", ";
+        os << "\n";
+        Group* gn = std::get<1>(collection[i])[j];
+
+        if (gn->root_ref == nullptr) {
+          os << "null root_ref" << ", ";
+        } else {
+          auto obj_root = GetRef<ObjectRef>(gn->root_ref);
+          if (obj_root.as<CallNode>()) {
+            auto cn_root = obj_root.as<CallNode>();
+            auto op_node_root = cn_root->op.as<OpNode>();
+            os << "root_ref: " << op_node_root->name << ", ";
+          } else if (obj_root.as<VarNode>()) {
+            os << "var node, ";
+          } else if (obj_root.as<ConstantNode>()) {
+            os << "const node, ";
+          } else {
+            std::cout << "Abnormal no.: " << std::get<0>(collection[i]) << std::endl;
+            exit(1);
+          }
+        }
+        if (gn->master_ref == nullptr) {
+          os << "null master_ref" << ", ";
+        } else {
+          auto obj_master = GetRef<ObjectRef>(gn->master_ref);
+          if (obj_master.as<CallNode>()) {
+            auto cn_master = obj_master.as<CallNode>();
+            auto op_node_master = cn_master->op.as<OpNode>();
+            os << "master_ref: " << op_node_master->name << ", ";
+            auto last_op = cn_master->args[0].as<CallNode>();
+            if (last_op) {
+              os << "last op: " << last_op->op.as<OpNode>()->name << ", ";
+            } else {
+              os << "last op: Var or Constant, ";
+            }
+          } else if (obj_master.as<VarNode>()) {
+            os << "var node, ";
+          } else if (obj_master.as<ConstantNode>()) {
+            os << "const node, ";
+          } else {
+            std::cout << "Abnormal no.: " << std::get<0>(collection[i]) << std::endl;
+            exit(1);
+          }
+        }
+      }
+    }
+    LOG(INFO) << os.str();
   }
 };
 
@@ -760,7 +923,7 @@ std::vector<GraphPartitioner::Group*> GraphPartitioner::Partition(
   // get post dominator tree
   auto post_dom_tree = DominatorTree::PostDom(arena_, graph);
   // run fusion algorithm.
-  for (int phase = 0; phase < 3; ++phase) {
+  for (int phase = 0; phase < 4; ++phase) {
     this->RunFuse(graph, post_dom_tree, phase);
   }
   return std::move(groups_);

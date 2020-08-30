@@ -396,15 +396,15 @@ TVM_REGISTER_GLOBAL("transform.Info").set_body([](TVMArgs args, TVMRetValue* ret
 TVM_STATIC_IR_FUNCTOR(ReprPrinter, vtable)
     .set_dispatch<PassInfoNode>([](const ObjectRef& ref, tvm::ReprPrinter* p) {
       auto* node = static_cast<const PassInfoNode*>(ref.get());
-      p->stream << "The meta data of the pass: ";
-      p->stream << "pass name: " << node->name;
-      p->stream << "opt_level: " << node->opt_level;
-      p->stream << "required passes: ["
+      p->stream << "The meta data of the pass: {\n";
+      p->stream << "    pass name: " << node->name << ",\n";
+      p->stream << "    opt_level: " << node->opt_level << ",\n";
+      p->stream << "    required passes: ["
                 << "\n";
       for (const auto& it : node->required) {
-        p->stream << it << ", ";
+        p->stream << "        " << it << ",\n";
       }
-      p->stream << "]\n";
+      p->stream << "    ]\n}";
     });
 
 TVM_REGISTER_NODE_TYPE(ModulePassNode);
