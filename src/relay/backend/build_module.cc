@@ -31,6 +31,7 @@
 #include <memory>
 
 #include "../../target/source/codegen_source_base.h"
+#include "compile_engine.h"
 #include "utils.h"
 
 namespace tvm {
@@ -229,6 +230,8 @@ class RelayBuildModule : public runtime::ModuleNode {
     targets_ = targets;
     target_host_ = target_host;
     BuildRelay(mod, params_);
+    // Clear compile engine so that tuning schedules can be changed between runs. See issue #6096.
+    CompileEngine::Global()->Clear();
   }
 
  protected:
@@ -255,6 +258,7 @@ class RelayBuildModule : public runtime::ModuleNode {
     Array<Pass> pass_seqs;
     Array<runtime::String> entry_functions{"main"};
     pass_seqs.push_back(transform::RemoveUnusedFunctions(entry_functions));
+    pass_seqs.push_back(transform::ToBasicBlockNormalForm());
 
     // Run all dialect legalization passes.
     pass_seqs.push_back(relay::qnn::transform::Legalize());
@@ -442,7 +446,7 @@ class RelayBuildModule : public runtime::ModuleNode {
       if (!target_host.defined())
         target_host = (pf != nullptr) ? target::llvm() : target::stackvm();
 
-      if (target_host.defined() && target_host->id->name == "llvm") {
+      if (target_host.defined() && target_host->kind->name == "llvm") {
         // If we can decide the target is LLVM, we then create an empty LLVM module.
         ret_.mod = (*pf)(target_host->str(), "empty_module");
       } else {
@@ -483,7 +487,7 @@ class RelayBuildModule : public runtime::ModuleNode {
     Target target_host = target_host_;
     if (!target_host_.defined()) {
       for (const auto& it : targets_) {
-        if (it.second->id->device_type == kDLCPU) {
+        if (it.second->kind->device_type == kDLCPU) {
           target_host = it.second;
           break;
         }
