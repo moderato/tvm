@@ -32,23 +32,6 @@
 namespace tvm {
 namespace contrib {
 
-// #ifndef CHECK_CUBLAS_ERROR
-// #define CHECK_CUBLAS_ERROR(fn)                  \
-//   do {                                          \
-//     int error = static_cast<int>(fn);                      \
-//     CHECK_EQ(error, CUBLAS_STATUS_SUCCESS) << "CUBLAS: " << GetCublasErrorString(error); \
-//   } while (0)  // ; intentionally left off.
-// #endif  // CHECK_CUBLAS_ERROR
-
-
-// struct LibxsmmThreadEntry {
-//   LibxsmmThreadEntry();
-//   ~LibxsmmThreadEntry();
-//   libxsmm_dnn_layer* handle{nullptr};
-//   libxsmm_dnn_err_t status;
-//   static LibxsmmThreadEntry* ThreadLocal(libxsmm_dnn_conv_desc conv_desc);
-// };  // LibxsmmThreadEntry
-
 }  // namespace contrib
 }  // namespace tvm
 

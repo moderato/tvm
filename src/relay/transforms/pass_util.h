@@ -28,6 +28,7 @@
 #include <tvm/relay/attrs/transform.h>
 #include <tvm/relay/expr.h>
 #include <tvm/relay/op.h>
+#include <tvm/relay/attrs/nn.h>
 
 #include <memory>
 #include <unordered_map>
@@ -121,6 +122,122 @@ inline bool IsOpName(const CallNode* call, const std::string& op_name) {
   CHECK(op_node) << "Expects a single op.";
   Op op = GetRef<Op>(op_node);
   return op == Op::Get(op_name);
+}
+
+/*!
+ * \brief (Two call nodes version) Start from a master op, e.g. conv2d, and detect any desired fusable pattern in a call node. TODO: Polish the logic.
+ * \param gn graph_node (current node in post dfs order)
+ * \param dnp dom_node's parent (current node in post_dom_tree)
+ * \return true if a fusable pattern is detected. Otherwise,
+ * false.
+ */
+inline bool DetectFusablePattern(const CallNode* gn, const CallNode* dnp) {
+  // Detect conv2d and search UPWARDS
+  // e.g. gn is relu of 1st layer, dnp is conv of 2nd layer
+  if (dnp->op.as<OpNode>()->name != "nn.conv2d") {
+    return false;
+  }
+
+  // NULL when gn is the first op and args[0] is a VarNode
+  auto last_op = gn;
+
+  // Only proceed when:
+  // - last_op is a CallNode, and
+  // - is a normal convolution
+  bool fuse = false;
+  if (last_op != nullptr && dnp->attrs.as<Conv2DAttrs>()->groups == 1) { // The conv in 2nd layer is a normal conv
+    LOG(INFO) << "last_op not null!";
+    std::cout << last_op->op.as<OpNode>()->name << std::endl;
+    if (IsOpName(last_op, "nn.conv2d")) { // (gn, dnp) = (depthwise + conv)
+      fuse = true;
+      std::cout << "1 Yes we fuse!" << std::endl;
+      // std::cout << "1 Yes we fuse! (" << graph_node->index << ", " << dom_node->parent->gnode->index << ")" << std::endl;
+    } else if (IsOpName(last_op, "nn.relu")) {
+      std::cout << last_op->op.as<OpNode>()->name << std::endl;
+      last_op = last_op->args[0].as<CallNode>();
+      if (IsOpName(last_op, "add")) {
+        std::cout << last_op->op.as<OpNode>()->name << std::endl;
+        last_op = last_op->args[0].as<CallNode>();
+        if (IsOpName(last_op, "multiply")) {
+          std::cout << last_op->op.as<OpNode>()->name << std::endl;
+          last_op = last_op->args[0].as<CallNode>();
+          if (IsOpName(last_op, "nn.conv2d") && last_op->attrs.as<Conv2DAttrs>()->groups > 1) {  // (gn, dnp) = (depthwise + bn + relu + conv)
+            fuse = true;
+            std::cout << "2 Yes we fuse!" << std::endl;
+            // std::cout << "2 Yes we fuse! (" << graph_node->index << ", " << dom_node->parent->gnode->index << ")" << std::endl;
+          }
+        }
+      }
+    }
+  }
+
+  return fuse;
+}
+
+/*!
+ * \brief (One call node version) Start from a master op, e.g. conv2d, and detect any desired fusable pattern in a call node. TODO: Polish the logic.
+ * \param call
+ * \return true if a fusable pattern is detected. Otherwise,
+ * false.
+ */
+inline bool DetectFusablePattern(const CallNode* call) {
+  bool fuse = false;
+  auto last_op = call;
+  if (last_op != nullptr) {
+    LOG(INFO) << "last_op not null!";
+    if (IsOpName(last_op, "nn.conv2d") && last_op->attrs.as<Conv2DAttrs>()->groups == 1) { // The conv in 2nd layer is a normal conv
+      std::cout << last_op->op.as<OpNode>()->name << std::endl;
+      last_op = last_op->args[0].as<CallNode>();
+
+      if (last_op != nullptr && IsOpName(last_op, "nn.conv2d") && last_op->attrs.as<Conv2DAttrs>()->groups > 1) { // The conv in 1st layer is a depthwise conv
+        fuse = true;
+        std::cout << "1 Yes we fuse!" << std::endl;
+        // std::cout << "1 Yes we fuse! (" << graph_node->index << ", " << dom_node->parent->gnode->index << ")" << std::endl;
+      }
+    } else if (IsOpName(last_op, "nn.relu")) {
+      std::cout << "there" << std::endl;
+      std::cout << last_op->op.as<OpNode>()->name << std::endl;
+      last_op = last_op->args[0].as<CallNode>();
+
+      if (IsOpName(last_op, "add")) {
+        std::cout << last_op->op.as<OpNode>()->name << std::endl;
+        last_op = last_op->args[0].as<CallNode>();
+
+        if (IsOpName(last_op, "multiply")) {
+          std::cout << last_op->op.as<OpNode>()->name << std::endl;
+          last_op = last_op->args[0].as<CallNode>();
+
+          if (IsOpName(last_op, "nn.conv2d") && last_op->attrs.as<Conv2DAttrs>()->groups == 1) { // The conv in 2nd layer is a normal conv
+            std::cout << last_op->op.as<OpNode>()->name << std::endl;
+            last_op = last_op->args[0].as<CallNode>();
+
+            if (last_op != nullptr && IsOpName(last_op, "nn.relu")) {
+              std::cout << last_op->op.as<OpNode>()->name << std::endl;
+              last_op = last_op->args[0].as<CallNode>();
+
+              if (IsOpName(last_op, "add")) {
+                std::cout << last_op->op.as<OpNode>()->name << std::endl;
+                last_op = last_op->args[0].as<CallNode>();
+
+                if (IsOpName(last_op, "multiply")) {
+                  std::cout << last_op->op.as<OpNode>()->name << std::endl;
+                  last_op = last_op->args[0].as<CallNode>();
+
+                  if (IsOpName(last_op, "nn.conv2d") && last_op->attrs.as<Conv2DAttrs>()->groups > 1) { // The conv in 1st layer is a depthwise conv
+                      fuse = true;
+                      std::cout << "1 Yes we fuse!" << std::endl;
+                      // std::cout << "1 Yes we fuse! (" << graph_node->index << ", " << dom_node->parent->gnode->index << ")" << std::endl;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return fuse;
 }
 
 /*!

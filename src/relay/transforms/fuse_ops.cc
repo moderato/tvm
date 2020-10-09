@@ -749,64 +749,27 @@ class GraphPartitioner {
 
       // **************************** Fuse two tuples of (conv2d + bn + relu)
       if (phase == 3) {
-        if (p) {
-          // DebugDump();
-          p = false;
-        }
+        // if (p) {
+        //   DebugDump();
+        //   p = false;
+        // }
 
         // To be fused:
         // graph_node (current node in post dfs order) and dom_node's parent (current node in post_dom_tree)
         auto obj_gn = GetRef<ObjectRef>(graph_node->ref);
-        auto obj_dn = GetRef<ObjectRef>(dom_node->gnode->ref);
         auto obj_dn_parent = GetRef<ObjectRef>(dom_node->parent->gnode->ref);
         auto gn = obj_gn.as<CallNode>();
-        auto dn = obj_dn.as<CallNode>();
         auto dnp = obj_dn_parent.as<CallNode>();
-        auto gn_op = gn->op.as<OpNode>();
-        auto dn_op = dn->op.as<OpNode>();
-        auto dnp_op = dnp->op.as<OpNode>();
 
-        // Detect conv2d and search UPWARDS
-        if (dnp_op->name == "nn.conv2d") {
-          // os << "phase 3: " << gn_op->name << graph_node->index << ", " << dn_op->name << dom_node->gnode->index << ", " << dnp_op->name << dom_node->parent->gnode->index << "\n";
-          // Get conv2d attributes
-          auto conv_attr = dnp->attrs.as<Conv2DAttrs>();
-          // NULL when gn is the first op and args[0] is a VarNode
-          auto last_op = gn;
-
-          // Only proceed when:
-          // - last_op is a CallNode, and 
-          // - is a normal convolution
-          bool fuse = false;
-          if (last_op != nullptr && conv_attr->groups == 1) {
-            if (IsOpName(last_op, "nn.conv2d")) {
-              fuse = true;
-              std::cout << "1 Yes we fuse! (" << graph_node->index << ", " << dom_node->parent->gnode->index << ")" << std::endl;
-            } else if (IsOpName(last_op, "nn.relu")) {
-              last_op = last_op->args[0].as<CallNode>();
-              if (IsOpName(last_op, "add")) {
-                last_op = last_op->args[0].as<CallNode>();
-                if (IsOpName(last_op, "multiply")) {
-                  last_op = last_op->args[0].as<CallNode>();
-                  conv_attr = last_op->attrs.as<Conv2DAttrs>();
-                  if (IsOpName(last_op, "nn.conv2d") && conv_attr->groups > 1) {
-                    fuse = true;
-                    std::cout << "2 Yes we fuse! (" << graph_node->index << ", " << dom_node->parent->gnode->index << ")" << std::endl;
-                  }
-                }
-              }
-            }
+        // std::cout << "phase 3: " << graph_node->index << ", " << dom_node->gnode->index << ", " << dnp->op.as<OpNode>()->name << ", " << dom_node->parent->gnode->index << "\n";
+        bool fuse = DetectFusablePattern(gn, dnp);
+        if (fuse) {
+          // std::cout << "@@@@@@@" << std::endl;
+          auto fcond = [](OpPatternKind kind, bool is_sink) { return true; };
+          if (CheckPath(graph_node, dom_node->parent->gnode, fcond)) {
+            CommitFuse(graph_node, dom_node->parent->gnode);
           }
-
-          //
-          if (fuse) {
-            // std::cout << "@@@@@@@" << std::endl;
-            auto fcond = [](OpPatternKind kind, bool is_sink) { return true; };
-            if (CheckPath(graph_node, dom_node->parent->gnode, fcond)) {
-              CommitFuse(graph_node, dom_node->parent->gnode);
-            }
-            // std::cout << "@@@@@@@" << std::endl;
-          }
+          // std::cout << "@@@@@@@" << std::endl;
         }
         continue;
       }
@@ -828,7 +791,7 @@ class GraphPartitioner {
           // The fuse can be executed if all the intermediate ops are still broadcast.
           auto fcond = [](OpPatternKind kind, bool is_sink) { return kind <= kBroadcast; };
           if (CheckPath(graph_node, dom_node->parent->gnode, fcond)) {
-            std::cout << "Fuse at condition 1 (phase " << phase << ")" << std::endl;
+            // std::cout << "Fuse at condition 1 (phase " << phase << ")" << std::endl;
             CommitFuse(graph_node, dom_node->parent->gnode);
           }
         }
@@ -849,7 +812,7 @@ class GraphPartitioner {
             }
           };
           if (CheckPath(graph_node, dom_node->parent->gnode, fcond)) {
-            std::cout << "Fuse at condition 2 (phase " << phase << ")" << std::endl;
+            // std::cout << "Fuse at condition 2 (phase " << phase << ")" << std::endl;
             CommitFuse(graph_node, dom_node->parent->gnode);
           }
         }
@@ -860,7 +823,7 @@ class GraphPartitioner {
         // Check if all path are injective.
         auto fcond = [](OpPatternKind kind, bool is_sink) { return kind <= kInjective; };
         if (CheckPath(graph_node, dom_node->parent->gnode, fcond)) {
-          std::cout << "Fuse at condition 3 (phase " << phase << ")" << std::endl;
+          // std::cout << "Fuse at condition 3 (phase " << phase << ")" << std::endl;
           CommitFuse(graph_node, dom_node->parent->gnode);
         }
       } else {
@@ -954,7 +917,8 @@ std::vector<GraphPartitioner::Group*> GraphPartitioner::Partition(
   // get post dominator tree
   auto post_dom_tree = DominatorTree::PostDom(arena_, graph);
   // run fusion algorithm.
-  for (int phase = 0; phase < 4; ++phase) {
+  for (int phase = 0; phase < (opt_level_ > 4 ? 4 : 3); ++phase) { // (opt_level_ > 4 ? 4 : 3)
+    std::cout << "Phase " << phase << " begins" << std::endl;
     this->RunFuse(graph, post_dom_tree, phase);
   }
   return std::move(groups_);

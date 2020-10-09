@@ -167,7 +167,7 @@ def schedule_depthwise_conv2d_nhwc(cfg, outs):
             cfg.define_knob("auto_unroll_max_step", [0, 256, 1500])
 
             target = tvm.target.Target.current()
-            if target.target_name in ['nvptx', 'rocm']:
+            if target.kind.name in ['nvptx', 'rocm']:
                 cfg.define_knob("unroll_explicit", [1])
             else:
                 cfg.define_knob("unroll_explicit", [0, 1])
@@ -175,7 +175,7 @@ def schedule_depthwise_conv2d_nhwc(cfg, outs):
             # fallback support
             if cfg.is_fallback:
                 ref_log = autotvm.tophub.load_reference_log(
-                    target.target_name, target.model, 'depthwise_conv2d_nhwc.cuda')
+                    target.kind.name, target.model, 'depthwise_conv2d_nhwc.cuda')
                 cfg.fallback_with_reference_log(ref_log)
                 # TODO(lmzheng): A bug here, set unroll_explicit to False as workaround
                 cfg['unroll_explicit'].val = 0
