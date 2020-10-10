@@ -343,11 +343,11 @@ def conv2d_fusion_strategy_cuda(p, all_inputs, pattern, target):
                 return topi_schedule(outs)
         return wrapper
 
-    fc = FusionComposer(p, True, target.kind.name)
+    fc = FusionComposer(p, True, target)
     strategy = _op.OpStrategy()
     strategy.add_implementation(
         wrap_compute_conv2d_fusion(fc.get_compute()),
-        wrap_schedule_conv2d_fusion(fc.get_schedule(pattern)),
+        wrap_schedule_conv2d_fusion(fc.get_schedule(pattern, tuning=False)), # tuning=False: query workload from ctx
         name="conv2d_fusion.cuda")
     return strategy
 
@@ -372,18 +372,6 @@ def select_fusion_implementation(call, inputs, pattern, ret_type, target):
 
     print("------=====")
     outs = impl.compute(None, inputs, ret_type)
-    workload = ("fused",) + autotvm.task.topi_integration.serialize_args([parameters, True, target.kind.name, pattern])
-    dispatch_ctx = autotvm.task.DispatchContext.current
-    cfg = dispatch_ctx.query(target, workload)
-    if cfg.is_fallback:
-        raise Exception("AutoTVM cfg not found!")
-    logger.info(
-        "Using %s for fusing %s based on lowest cost (%.2e)",
-        impl.name, pattern, cfg.cost,
-    )
-
-    print(type(impl))
-    print(type(outs))
     return impl, outs
 
 
