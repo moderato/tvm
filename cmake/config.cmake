@@ -46,7 +46,7 @@
 # - ON: enable CUDA with cmake's auto search
 # - OFF: disable CUDA
 # - /path/to/cuda: use specific path to cuda toolkit
-set(USE_CUDA OFF)
+set(USE_CUDA ON)
 
 # Whether enable ROCM runtime
 #
@@ -63,12 +63,7 @@ set(USE_SDACCEL OFF)
 set(USE_AOCL OFF)
 
 # Whether enable OpenCL runtime
-#
-# Possible values:
-# - ON: enable OpenCL with cmake's auto search
-# - OFF: disable OpenCL
-# - /path/to/opencl-sdk: use specific path to opencl-sdk
-set(USE_OPENCL OFF)
+set(USE_OPENCL /usr/lib/x86_64-linux-gnu)
 
 # Whether enable Metal runtime
 set(USE_METAL OFF)
@@ -101,9 +96,6 @@ set(RUST_SGX_SDK "/path/to/rust-sgx-sdk")
 # Whether enable RPC runtime
 set(USE_RPC ON)
 
-# Whether to build the C++ RPC server binary
-set(USE_CPP_RPC OFF)
-
 # Whether embed stackvm into the runtime
 set(USE_STACKVM_RUNTIME OFF)
 
@@ -111,7 +103,7 @@ set(USE_STACKVM_RUNTIME OFF)
 set(USE_GRAPH_RUNTIME ON)
 
 # Whether enable additional graph debug functions
-set(USE_GRAPH_RUNTIME_DEBUG OFF)
+set(USE_GRAPH_RUNTIME_DEBUG ON)
 
 # Whether enable additional vm profiler functions
 set(USE_VM_PROFILER OFF)
@@ -126,36 +118,32 @@ set(USE_MICRO_STANDALONE_RUNTIME OFF)
 # - ON: enable llvm with cmake's find search
 # - OFF: disable llvm
 # - /path/to/llvm-config: enable specific LLVM when multiple llvm-dev is available.
-set(USE_LLVM OFF)
+set(USE_LLVM /usr/bin/llvm-config)
 
 #---------------------------------------------
 # Contrib libraries
 #---------------------------------------------
-# Whether use BLAS, choices: openblas, atlas, apple
-set(USE_BLAS none)
+# Whether use BLAS, choices: openblas, mkl, atlas, apple
+set(USE_BLAS mkl)
 
-# Whether to use MKL
-# Possible values:
-# - ON: Enable MKL
-# - /path/to/mkl: mkl root path
-# - OFF: Disable MKL
-# set(USE_MKL /opt/intel/mkl) for UNIX
-# set(USE_MKL ../IntelSWTools/compilers_and_libraries_2018/windows/mkl) for WIN32
-# set(USE_MKL <path to venv or site-packages directory>) if using `pip install mkl`
-set(USE_MKL OFF)
+# /path/to/mkl: mkl root path when use mkl blas library
+# set(USE_MKL_PATH /opt/intel/mkl) for UNIX
+# set(USE_MKL_PATH ../IntelSWTools/compilers_and_libraries_2018/windows/mkl) for WIN32
+# set(USE_MKL_PATH <path to venv or site-packages directory>) if using `pip install mkl`
+set(USE_MKL_PATH /opt/intel/mkl)
 
-# Whether use MKLDNN library, choices: ON, OFF, path to mkldnn library
-set(USE_MKLDNN OFF)
+# Whether use MKLDNN library
+set(USE_MKLDNN ON)
 
 # Whether use XSMM library, choices: ON, OFF, path to libxsmm library
-set(USE_XSMM none)
+set(USE_XSMM /home/zhongyilin/Documents/libxsmm)
 
 # Whether use OpenMP thread pool, choices: gnu, intel
 # Note: "gnu" uses gomp library, "intel" uses iomp5 library
-set(USE_OPENMP none)
+set(USE_OPENMP OFF)
 
 # Whether use contrib.random in runtime
-set(USE_RANDOM ON)
+set(USE_RANDOM OFF)
 
 # Whether use NNPack
 set(USE_NNPACK OFF)
@@ -163,26 +151,17 @@ set(USE_NNPACK OFF)
 # Possible values:
 # - ON: enable tflite with cmake's find search
 # - OFF: disable tflite
-# - /path/to/libtensorflow-lite.a: use specific path to tensorflow lite library
+# - /path/to/libtensorflow-lite.a: use specific path to tensorflow lite library 
 set(USE_TFLITE OFF)
 
 # /path/to/tensorflow: tensorflow root path when use tflite library
 set(USE_TENSORFLOW_PATH none)
 
-# Required for full builds with TFLite. Not needed for runtime with TFLite.
-# /path/to/flatbuffers: flatbuffers root path when using tflite library
-set(USE_FLATBUFFERS_PATH none)
-
-# Possible values:
-# - OFF: disable tflite support for edgetpu
-# - /path/to/edgetpu: use specific path to edgetpu library
-set(USE_EDGETPU OFF)
-
 # Whether use CuDNN
-set(USE_CUDNN OFF)
+set(USE_CUDNN ON)
 
 # Whether use cuBLAS
-set(USE_CUBLAS OFF)
+set(USE_CUBLAS ON)
 
 # Whether use MIOpen
 set(USE_MIOPEN OFF)
@@ -196,42 +175,15 @@ set(USE_ROCBLAS OFF)
 # Whether use contrib sort
 set(USE_SORT ON)
 
-# Whether use MKL-DNN (DNNL) codegen
-set(USE_DNNL_CODEGEN OFF)
-
-# Whether to use Arm Compute Library (ACL) codegen
-# We provide 2 separate flags since we cannot build the ACL runtime on x86.
-# This is useful for cases where you want to cross-compile a relay graph
-# on x86 then run on AArch.
-#
-# An example of how to use this can be found here: docs/deploy/arm_compute_lib.rst.
-#
-# USE_ARM_COMPUTE_LIB - Support for compiling a relay graph offloading supported
-#                       operators to Arm Compute Library. OFF/ON
-# USE_ARM_COMPUTE_LIB_GRAPH_RUNTIME - Run Arm Compute Library annotated functions via the ACL
-#                                     runtime. OFF/ON/"path/to/ACL"
-set(USE_ARM_COMPUTE_LIB OFF)
-set(USE_ARM_COMPUTE_LIB_GRAPH_RUNTIME OFF)
-
-# Whether to build with Arm Ethos-N support
-# Possible values:
-# - OFF: disable Arm Ethos-N support
-# - path/to/arm-ethos-N-stack: use a specific version of the
-#   Ethos-N driver stack
-set(USE_ETHOSN OFF)
-# If USE_ETHOSN is enabled, use ETHOSN_HW (ON) if Ethos-N hardware is available on this machine
-# otherwise use ETHOSN_HW (OFF) to use the software test infrastructure
-set(USE_ETHOSN_HW OFF)
-
 # Build ANTLR parser for Relay text format
 # Possible values:
 # - ON: enable ANTLR by searching default locations (cmake find_program for antlr4 and /usr/local for jar)
 # - OFF: disable ANTLR
 # - /path/to/antlr-*-complete.jar: path to specific ANTLR jar file
-set(USE_ANTLR OFF)
+set(USE_ANTLR ON)
 
 # Whether use Relay debug mode
-set(USE_RELAY_DEBUG OFF)
+set(USE_RELAY_DEBUG ON)
 
 # Whether to build fast VTA simulator driver
 set(USE_VTA_FSIM OFF)
@@ -242,22 +194,5 @@ set(USE_VTA_TSIM OFF)
 # Whether to build VTA FPGA driver (device side only)
 set(USE_VTA_FPGA OFF)
 
-# Whether use Thrust
-set(USE_THRUST OFF)
-
-# Whether to build the TensorFlow TVMDSOOp module
-set(USE_TF_TVMDSOOP OFF)
-
-# Whether to use STL's std::unordered_map or TVM's POD compatible Map
-set(USE_FALLBACK_STL_MAP OFF)
-
-# Whether to use hexagon device
-set(USE_HEXAGON_DEVICE OFF)
-set(USE_HEXAGON_SDK /path/to/sdk)
-
-# Whether to use ONNX codegen
-set(USE_TARGET_ONNX OFF)
-
-# Whether to compile the standalone C runtime.
-set(USE_STANDALONE_CRT ON)
-
+# Whether to build the example external runtime module
+set(USE_EXAMPLE_EXT_RUNTIME OFF)
