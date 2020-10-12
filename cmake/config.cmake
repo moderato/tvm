@@ -63,7 +63,7 @@ set(USE_SDACCEL OFF)
 set(USE_AOCL OFF)
 
 # Whether enable OpenCL runtime
-set(USE_OPENCL /usr/lib/x86_64-linux-gnu)
+set(USE_OPENCL OFF)
 
 # Whether enable Metal runtime
 set(USE_METAL OFF)
@@ -124,7 +124,7 @@ set(USE_LLVM /usr/bin/llvm-config)
 # Contrib libraries
 #---------------------------------------------
 # Whether use BLAS, choices: openblas, mkl, atlas, apple
-set(USE_BLAS mkl)
+set(USE_BLAS OFF)
 
 # /path/to/mkl: mkl root path when use mkl blas library
 # set(USE_MKL_PATH /opt/intel/mkl) for UNIX
@@ -173,14 +173,14 @@ set(USE_MPS OFF)
 set(USE_ROCBLAS OFF)
 
 # Whether use contrib sort
-set(USE_SORT ON)
+set(USE_SORT OFF)
 
 # Build ANTLR parser for Relay text format
 # Possible values:
 # - ON: enable ANTLR by searching default locations (cmake find_program for antlr4 and /usr/local for jar)
 # - OFF: disable ANTLR
 # - /path/to/antlr-*-complete.jar: path to specific ANTLR jar file
-set(USE_ANTLR ON)
+set(USE_ANTLR OFF)
 
 # Whether use Relay debug mode
 set(USE_RELAY_DEBUG ON)
