@@ -124,7 +124,7 @@ set(USE_LLVM /usr/bin/llvm-config)
 # Contrib libraries
 #---------------------------------------------
 # Whether use BLAS, choices: openblas, mkl, atlas, apple
-set(USE_BLAS OFF)
+set(USE_BLAS mkl)
 
 # /path/to/mkl: mkl root path when use mkl blas library
 # set(USE_MKL_PATH /opt/intel/mkl) for UNIX
@@ -136,7 +136,7 @@ set(USE_MKL_PATH /opt/intel/mkl)
 set(USE_MKLDNN ON)
 
 # Whether use XSMM library, choices: ON, OFF, path to libxsmm library
-set(USE_XSMM /home/zhongyilin/Documents/libxsmm)
+set(USE_XSMM /root/libxsmm)
 
 # Whether use OpenMP thread pool, choices: gnu, intel
 # Note: "gnu" uses gomp library, "intel" uses iomp5 library
