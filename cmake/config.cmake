@@ -136,7 +136,7 @@ set(USE_MKL_PATH /opt/intel/mkl)
 set(USE_MKLDNN ON)
 
 # Whether use XSMM library, choices: ON, OFF, path to libxsmm library
-set(USE_XSMM /root/libxsmm)
+set(USE_XSMM /root/Documents/libxsmm)
 
 # Whether use OpenMP thread pool, choices: gnu, intel
 # Note: "gnu" uses gomp library, "intel" uses iomp5 library
