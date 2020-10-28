@@ -119,6 +119,54 @@ with the layer input to produce a tensor of outputs.
     .add_type_rel("Conv2D", Conv2DRel<Conv2DAttrs>)
     .set_attr<FInferCorrectLayout>("FInferCorrectLayout", ConvInferCorrectLayout<Conv2DAttrs>);
 
+
+
+// relay.nn.fused_conv2d
+TVM_REGISTER_NODE_TYPE(FusedConv2DAttrs);
+
+TVM_REGISTER_GLOBAL("relay.op.nn._make.fused_conv2d")
+    .set_body_typed([](
+                        Expr data, 
+                        Expr weight1, Expr scale1, Expr shift1,
+                        Expr weight2, Expr scale2, Expr shift2,
+                        Array<Array<IndexExpr>> strides_array,
+                        Array<Array<IndexExpr>> padding_array,
+                        Array<Array<IndexExpr>> dilation_array, 
+                        Array<IndexExpr> groups_array,
+                        Array<IndexExpr> channels_array,
+                        Array<Array<IndexExpr>> kernel_size_array, 
+                        Array<Bool> bn_relu_array,
+                        Array<String> data_layout_array, 
+                        Array<String> kernel_layout_array,
+                        Array<String> out_layout_array,
+                        DataType out_dtype
+    ) {
+      return MakeFusedConv2D<FusedConv2DAttrs>( data, 
+                                                weight1, scale1, shift1,
+                                                weight2, scale2, shift2,
+                                                strides_array, padding_array, dilation_array, 
+                                                groups_array, channels_array, kernel_size_array, bn_relu_array,
+                                                data_layout_array, kernel_layout_array, out_layout_array, out_dtype,
+                                                "nn.fused_conv2d");
+    });
+
+RELAY_REGISTER_OP("nn.fused_conv2d")
+    .describe(R"code(
+        Fused conv2d.
+)code" TVM_ADD_FILELINE)
+    .set_attrs_type<FusedConv2DAttrs>()
+    .set_num_inputs(7)
+    .add_argument("data", "Tensor", "The input tensor.")
+    .add_argument("weight1", "Tensor", "The first weight tensor.")
+    .add_argument("scale1", "Tensor", "The first scale tensor.")
+    .add_argument("shift1", "Tensor", "The first shift tensor.")
+    .add_argument("weight2", "Tensor", "The second weight tensor.")
+    .add_argument("scale2", "Tensor", "The second scale tensor.")
+    .add_argument("shift2", "Tensor", "The second shift tensor.")
+    .set_support_level(2);
+
+
+
 // relay.nn.conv3d
 TVM_REGISTER_NODE_TYPE(Conv3DAttrs);
 

@@ -56,6 +56,39 @@ inline Expr MakeConv(Expr data, Expr weight, Array<IndexExpr> strides, Array<Ind
 }
 
 template <typename T>
+inline Expr MakeFusedConv2D(Expr data,
+                            Expr weight1, Expr scale1, Expr shift1,
+                            Expr weight2, Expr scale2, Expr shift2,
+                            Array<Array<IndexExpr>> strides_array,
+                            Array<Array<IndexExpr>> padding_array,
+                            Array<Array<IndexExpr>> dilation_array, 
+                            Array<IndexExpr> groups_array,
+                            Array<IndexExpr> channels_array,
+                            Array<Array<IndexExpr>> kernel_size_array, 
+                            Array<Bool> bn_relu_array,
+                            Array<String> data_layout_array, 
+                            Array<String> kernel_layout_array,
+                            Array<String> out_layout_array,
+                            DataType out_dtype,
+                            std::string op_name) {
+  auto fused_conv2d_attrs = make_object<T>();
+  fused_conv2d_attrs->num_layers = 2;
+  fused_conv2d_attrs->strides_array = std::move(strides_array);
+  fused_conv2d_attrs->padding_array = std::move(padding_array);
+  fused_conv2d_attrs->dilation_array = std::move(dilation_array);
+  fused_conv2d_attrs->groups_array = std::move(groups_array);
+  fused_conv2d_attrs->channels_array = std::move(channels_array);
+  fused_conv2d_attrs->kernel_size_array = std::move(kernel_size_array);
+  fused_conv2d_attrs->bn_relu_array = std::move(bn_relu_array);
+  fused_conv2d_attrs->data_layout_array = std::move(data_layout_array);
+  fused_conv2d_attrs->kernel_layout_array = std::move(kernel_layout_array);
+  fused_conv2d_attrs->out_layout_array = std::move(out_layout_array);
+  fused_conv2d_attrs->out_dtype = std::move(out_dtype);
+  const Op& op = Op::Get(op_name);
+  return Call(op, {data, weight1, scale1, shift1, weight2, scale2, shift2}, Attrs(fused_conv2d_attrs), {});
+}
+
+template <typename T>
 inline Expr MakeConvWinograd(Expr data, Expr weight, int tile_size, Array<IndexExpr> strides,
                              Array<IndexExpr> padding, Array<IndexExpr> dilation, int groups,
                              IndexExpr channels, Array<IndexExpr> kernel_size,

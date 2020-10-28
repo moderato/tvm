@@ -210,6 +210,25 @@ def conv2d(data,
                         kernel_layout, out_layout, out_dtype)
 
 
+def fused_conv2d(   data,
+                    weight1, scale1, shift1,
+                    weight2, scale2, shift2,
+                    strides_array, padding_array, dilation_array,
+                    groups_array, channels_array, kernel_size_array, bn_relu_array,
+                    data_layout_array, kernel_layout_array, out_layout_array, out_dtype):
+    kernel_size_array = [(kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size for kernel_size in kernel_size_array]
+    strides_array = [(strides, strides) if isinstance(strides, int) else strides for strides in strides_array]
+    dilation_array = [(dilation, dilation) if isinstance(dilation, int) else dilation for dilation in dilation_array]
+    padding_array = [get_pad_tuple2d(padding) for padding in padding_array]
+
+    return _make.fused_conv2d(  data, 
+                                weight1, scale1, shift1,
+                                weight2, scale2, shift2,
+                                strides_array, padding_array, dilation_array, 
+                                groups_array, channels_array, kernel_size_array, bn_relu_array,
+                                data_layout_array, kernel_layout_array, out_layout_array, out_dtype)
+
+
 def conv3d(data,
            weight,
            strides=(1, 1, 1),

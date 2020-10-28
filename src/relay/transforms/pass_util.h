@@ -132,9 +132,11 @@ inline bool IsOpName(const CallNode* call, const std::string& op_name) {
  * false.
  */
 inline bool DetectFusablePattern(const CallNode* gn, const CallNode* dnp) {
+  std::cout << "Detect fusable begins" << std::endl;
+
   // Detect conv2d and search UPWARDS
   // e.g. gn is relu of 1st layer, dnp is conv of 2nd layer
-  if (dnp->op.as<OpNode>()->name != "nn.conv2d") {
+  if (dnp->op.as<OpNode>() == nullptr || dnp->op.as<OpNode>()->name != "nn.conv2d") {
     return false;
   }
 

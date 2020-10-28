@@ -176,6 +176,50 @@ struct Conv2DAttrs : public tvm::AttrsNode<Conv2DAttrs> {
   }
 };
 
+struct FusedConv2DAttrs : public tvm::AttrsNode<FusedConv2DAttrs> {
+  int num_layers;
+  Array<Array<IndexExpr>> strides_array;
+  Array<Array<IndexExpr>> padding_array;
+  Array<Array<IndexExpr>> dilation_array;
+  Array<IndexExpr> groups_array;
+  Array<IndexExpr> channels_array;
+  Array<Array<IndexExpr>> kernel_size_array;
+  Array<Bool> bn_relu_array;
+  Array<String> data_layout_array;
+  Array<String> kernel_layout_array;
+  Array<String> out_layout_array;
+  DataType out_dtype;
+  TVM_DECLARE_ATTRS(FusedConv2DAttrs,
+                    "relay.attrs.FusedConv2DAttrs") {
+    TVM_ATTR_FIELD(num_layers).describe(
+        "Number of fused convolution layers.");
+    TVM_ATTR_FIELD(strides_array)
+        .describe("");
+    TVM_ATTR_FIELD(padding_array)
+        .describe("");
+    TVM_ATTR_FIELD(dilation_array)
+        .describe("Specifies the dilation rate to use for dilated convolution.");
+    TVM_ATTR_FIELD(groups_array)
+        .describe("");
+    TVM_ATTR_FIELD(channels_array)
+        .describe("");
+    TVM_ATTR_FIELD(kernel_size_array)
+        .describe("");
+    TVM_ATTR_FIELD(data_layout_array)
+        .describe("");
+    TVM_ATTR_FIELD(kernel_layout_array)
+        .describe("");
+    TVM_ATTR_FIELD(out_layout_array)
+        .describe("");
+    TVM_ATTR_FIELD(bn_relu_array)
+        .describe("BN ReLU of each fused layer.");
+    // use 0 bits to indicate none.
+    TVM_ATTR_FIELD(out_dtype)
+        .set_default(NullValue<DataType>())
+        .describe("Output data type, set to explicit type under mixed precision setting");
+  }
+};
+
 /*! \brief Attributes used in winograd weight transformation operators */
 struct ConvWinogradWeightTransformAttrs : public tvm::AttrsNode<ConvWinogradWeightTransformAttrs> {
   int tile_size;
