@@ -44,7 +44,7 @@ inline std::unordered_map<std::string, runtime::FunctionInfo> ExtractFuncInfo(co
   std::unordered_map<std::string, runtime::FunctionInfo> fmap;
 
   for (auto kv : mod->functions) {
-    CHECK(kv.second->IsInstance<tir::PrimFuncNode>()) << "Can only lower IR Module with PrimFuncs";
+    ICHECK(kv.second->IsInstance<tir::PrimFuncNode>()) << "Can only lower IR Module with PrimFuncs";
     auto f = Downcast<tir::PrimFunc>(kv.second);
 
     runtime::FunctionInfo info;
@@ -61,22 +61,6 @@ inline std::unordered_map<std::string, runtime::FunctionInfo> ExtractFuncInfo(co
     fmap[static_cast<std::string>(global_symbol.value())] = info;
   }
   return fmap;
-}
-
-inline void UpdateTargetConfigKeyValueEntry(const String& key, const String& value,
-                                            Map<String, ObjectRef>* target_config,
-                                            bool error_if_inconsistent) {
-  if (target_config->count(key)) {
-    const ObjectRef& obj = (*target_config)[key];
-    CHECK(obj->IsInstance<StringObj>()) << "TypeError: Expect target key \"" << key
-                                        << "\" to be String, but gets type: " << obj->GetTypeKey();
-    if (error_if_inconsistent) {
-      String old_value = Downcast<String>(obj);
-      CHECK_EQ(old_value, value) << "ValueError: Target key \"" << key << "\" has been set to \""
-                                 << old_value << "\", and cannot be reset to \"" << value << "\"";
-    }
-  }
-  target_config->Set(key, value);
 }
 
 }  // namespace codegen

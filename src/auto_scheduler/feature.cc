@@ -27,6 +27,7 @@
 #include <tvm/auto_scheduler/measure.h>
 #include <tvm/auto_scheduler/measure_record.h>
 #include <tvm/runtime/registry.h>
+#include <tvm/support/parallel_for.h>
 #include <tvm/te/operation.h>
 #include <tvm/te/schedule_pass.h>
 #include <tvm/tir/analysis.h>
@@ -81,8 +82,8 @@ enum class BufferAccessType : int { kRead = 0, kWrite = 1, kReadWrite = 2, kUnkn
 struct BufferAccess {
   // data reuse type
   BufferAccessType acc_type{BufferAccessType::kUnknownRW};
-  // Use a two-dimentional array to store multiple multi-dimentional accesses.
-  // The innermost vector stores the multi-dimentional indices of one access.
+  // Use a two-dimensional array to store multiple multi-dimensional accesses.
+  // The innermost vector stores the multi-dimensional indices of one access.
   std::vector<std::vector<PrimExpr>> indices;
 };
 
@@ -130,7 +131,7 @@ struct FeatureSet {
   float vec_num;                    // The number of vectorized iterators
   float vec_prod;                   // The product of the lengths of vectorized iterators
   float vec_len;                    // The length of the innermost vectorized iterator
-  AnnotationPosType vec_type;       // The type of vectorizatoin position
+  AnnotationPosType vec_type;       // The type of vectorization position
   float unroll_num;                 // The number of unrolled iterators
   float unroll_prod;                // The product of the lengths of vectorized iterators
   float unroll_len;                 // The length of the innermost unrolled iterator
@@ -157,12 +158,12 @@ struct FeatureSet {
 
   // Group 4: Allocation related features
   float alloc_size;        // The size of allocated buffer in bytes
-  float alloc_outer_prod;  // The product of lenghts of loops outside the scope of the allocation
-  float alloc_inner_prod;  // The product of lenghts of loops inside the score of the allocation
+  float alloc_outer_prod;  // The product of lengths of loops outside the scope of the allocation
+  float alloc_inner_prod;  // The product of lengths of loops inside the score of the allocation
   float alloc_prod;        // alloc_outer_prod * alloc_inner_prod
 
   // Group 5: Outer scope related features
-  float outer_prod;            // The product of lenghts of outer loops
+  float outer_prod;            // The product of lengths of outer loops
   float num_loops;             // The number of outer loops
   float auto_unroll_max_step;  // The value of pragma "auto_unroll_max_step"
 };
@@ -220,7 +221,7 @@ AnnotationPosType GetAnnotationPosEncoding(const Var& var, const Array<PrimExpr>
       }
     } else {
       // If the axis is not found in both spatial args and reduce axis,
-      // then this stage must compute_at somewhere under this aixs and this axis is simplified out
+      // then this stage must compute_at somewhere under this axis and this axis is simplified out
       // We assume it is an outer spatial
       return AnnotationPosType::kPosOuterSpatial;
     }
@@ -297,7 +298,7 @@ class MathOpCounter : public StmtExprVisitor {
 
   void VisitExpr_(const CallNode* op) final {
     auto* pop = op->op.as<OpNode>();
-    CHECK(pop != nullptr);
+    ICHECK(pop != nullptr);
     auto effect_kind = op_call_effect_[GetRef<Op>(pop)];
     bool is_pure =
         effect_kind == CallEffectKind::kPure || effect_kind == CallEffectKind::kExprAnnotation;
@@ -870,7 +871,9 @@ class PerStoreFeatureExtractor : public StmtExprVisitor {
         stride = (i == static_cast<int>(for_loop_stack_.size()) - 1 ? stride : 0);
 
         float n_continuous = ele_bytes;
-        for (int i = static_cast<int>(tmp_region.size()) - 1; i >= 0; i--) {
+        for (int i = std::min(static_cast<int>(tmp_region.size()) - 1,
+                              static_cast<int>(int_shape.size()) - 1);
+             i >= 0; i--) {
           if (tmp_region[i] == int_shape[i]) {
             n_continuous *= tmp_region[i];
             break;
@@ -934,7 +937,7 @@ class PerStoreFeatureExtractor : public StmtExprVisitor {
         while (compute_ops_list[pt] < cur_compute_ops - 1e-4) {
           pt++;
         }
-        CHECK_LT(pt, compute_ops_list.size());
+        ICHECK_LT(pt, compute_ops_list.size());
 
         float value;
         if (pt == 0) {
@@ -1320,7 +1323,7 @@ void GetPerStoreFeaturesWorkerFunc(const SearchTask& task, const State& state, i
         tir::transform::Sequential(Array<tvm::transform::Pass>{tir::transform::Simplify()});
     mod = optimize(std::move(mod));
     const auto& it = mod->functions.find(global_var);
-    CHECK(it != mod->functions.end());
+    ICHECK(it != mod->functions.end());
     const auto& prim_func = (*it).second.as<PrimFuncNode>();
     GetPerStoreFeature(prim_func->body, task->hardware_params->cache_line_bytes, max_n_bufs,
                        feature);
@@ -1337,9 +1340,11 @@ void GetPerStoreFeaturesFromStates(const Array<State>& states, const SearchTask&
 
   std::atomic<int> error_ct(0);
 
-  for (size_t i = skip_first_n_feature_extraction; i < states.size(); ++i) {
-    GetPerStoreFeaturesWorkerFunc(task, states[i], max_n_bufs, &(*features)[i], &error_ct);
-  }
+  support::parallel_for(skip_first_n_feature_extraction, states.size(),
+                        [&task, &states, &max_n_bufs, &features, &error_ct](int i) {
+                          GetPerStoreFeaturesWorkerFunc(task, states[i], max_n_bufs,
+                                                        &(*features)[i], &error_ct);
+                        });
 
   if (error_ct > 0) {
     std::cerr << "Encountered " << error_ct
@@ -1355,9 +1360,11 @@ void GetPerStoreFeaturesFromStates(const Array<State>& states, const std::vector
 
   std::atomic<int> error_ct(0);
 
-  for (size_t i = skip_first_n_feature_extraction; i < states.size(); ++i) {
-    GetPerStoreFeaturesWorkerFunc(tasks[i], states[i], max_n_bufs, &(*features)[i], &error_ct);
-  }
+  support::parallel_for(skip_first_n_feature_extraction, states.size(),
+                        [&tasks, &states, &max_n_bufs, &features, &error_ct](int i) {
+                          GetPerStoreFeaturesWorkerFunc(tasks[i], states[i], max_n_bufs,
+                                                        &(*features)[i], &error_ct);
+                        });
 
   if (error_ct > 0) {
     std::cerr << "Encountered " << error_ct
@@ -1382,7 +1389,7 @@ void GetPerStoreFeaturesFromFile(const std::string& filename, int max_lines, int
 
   const auto* workload_key_to_tensors =
       tvm::runtime::Registry::Get("auto_scheduler.workload_key_to_tensors");
-  CHECK(workload_key_to_tensors != nullptr);
+  ICHECK(workload_key_to_tensors != nullptr);
 
   // read from file
   RecordReader reader(filename);
@@ -1447,7 +1454,7 @@ void GetPerStoreFeaturesFromMeasurePairs(const Array<MeasureInput>& inputs,
 
   const auto* workload_key_to_tensors =
       tvm::runtime::Registry::Get("auto_scheduler.workload_key_to_tensors");
-  CHECK(workload_key_to_tensors != nullptr);
+  ICHECK(workload_key_to_tensors != nullptr);
 
   tasks.reserve(inputs.size());
   normalized_throughputs->reserve(inputs.size());
@@ -1511,7 +1518,7 @@ void GetPerStoreFeaturesFromMeasurePairs(const Array<MeasureInput>& inputs,
  *   float features_i[size[i]];  // The features for record i
  *   ... // until i == n - 1
  *
- *   float throuputs[sizes[n]];  // The normalized throughputs for n records
+ *   float throughputs[sizes[n]];  // The normalized throughputs for n records
  *   int   task_ids[size[n+1];   // The task ids for n records
  *
  * }
@@ -1541,7 +1548,7 @@ TVMByteArray SerializeFeatures(std::vector<std::vector<float>>&& features,
   size_vector.push_back(static_cast<int>(task_ids.size()));
   total_bytes += sizeof(int) * task_ids.size();
 
-  CHECK_EQ(size_vector.size(), size_vector_size);
+  ICHECK_EQ(size_vector.size(), size_vector_size);
 
   // allocate memory
   out_data->reserve(total_bytes);
@@ -1567,7 +1574,7 @@ TVMByteArray SerializeFeatures(std::vector<std::vector<float>>&& features,
   memmove(ptr, reinterpret_cast<char*>(task_ids.data()), task_ids.size() * sizeof(int));
   ptr += task_ids.size() * sizeof(int);
 
-  CHECK_EQ(ptr - out_data->data(), total_bytes);
+  ICHECK_EQ(ptr - out_data->data(), total_bytes);
 
   return TVMByteArray{out_data->data(), total_bytes};
 }

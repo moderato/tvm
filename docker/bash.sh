@@ -70,7 +70,7 @@ else
     CUDA_ENV=""
 fi
 
-if [[ "${DOCKER_IMAGE_NAME}" == *"gpu"* ]]; then
+if [[ "${DOCKER_IMAGE_NAME}" == *"gpu"* || "${DOCKER_IMAGE_NAME}" == *"cuda"* ]]; then
     if ! type "nvidia-docker" 1> /dev/null 2> /dev/null
     then
         DOCKER_BINARY="docker"
@@ -87,6 +87,28 @@ if [[ "${DOCKER_IMAGE_NAME}" == *"ci"* ]]; then
 else
     CI_PY_ENV=""
 fi
+
+# If the Vitis-AI docker image is selected, expose the Xilinx FPGA devices and required volumes containing e.g. DSA's and overlays
+if [[ "${DOCKER_IMAGE_NAME}" == *"demo_vitis_ai"* && -d "/dev/shm" && -d "/opt/xilinx/dsa" && -d "/opt/xilinx/overlaybins" ]]; then
+    WORKSPACE_VOLUMES="-v /dev/shm:/dev/shm -v /opt/xilinx/dsa:/opt/xilinx/dsa -v /opt/xilinx/overlaybins:/opt/xilinx/overlaybins"
+    XCLMGMT_DRIVER="$(find /dev -name xclmgmt\*)"
+    DOCKER_DEVICES=""
+    for i in ${XCLMGMT_DRIVER} ;
+    do
+       DOCKER_DEVICES+="--device=$i "
+    done
+
+    RENDER_DRIVER="$(find /dev/dri -name renderD\*)"
+    for i in ${RENDER_DRIVER} ;
+    do
+        DOCKER_DEVICES+="--device=$i "
+    done
+
+else
+    DOCKER_DEVICES=""
+    WORKSPACE_VOLUMES=""
+fi
+
 
 # Print arguments.
 echo "WORKSPACE: ${WORKSPACE}"
@@ -108,6 +130,8 @@ fi
 # and share the PID namespace (--pid=host) so the process inside does not have
 # pid 1 and SIGKILL is propagated to the process inside (jenkins can kill it).
 ${DOCKER_BINARY} run --rm --pid=host\
+    ${DOCKER_DEVICES}\
+    ${WORKSPACE_VOLUMES}\
     -v ${WORKSPACE}:/workspace \
     -v ${SCRIPT_DIR}:/docker \
     "${EXTRA_MOUNTS[@]}" \
@@ -123,4 +147,4 @@ ${DOCKER_BINARY} run --rm --pid=host\
     "${CI_DOCKER_EXTRA_PARAMS[@]}" \
     ${DOCKER_IMAGE_NAME} \
     bash --login /docker/with_the_same_user \
-    ${COMMAND[@]}
+    "${COMMAND[@]}"

@@ -46,10 +46,7 @@ external! {
 
 impl<T: IsObjectRef> Array<T> {
     pub fn from_vec(data: Vec<T>) -> Result<Array<T>> {
-        let iter = data
-            .iter()
-            .map(|element| element.to_object_ref().into())
-            .collect();
+        let iter = data.into_iter().map(T::into_arg_value).collect();
 
         let func = Function::get("node.Array").expect(
             "node.Array function is not registered, this is most likely a build or linking error",
@@ -66,7 +63,7 @@ impl<T: IsObjectRef> Array<T> {
         );
 
         Ok(Array {
-            object: ObjectRef(Some(array_data)),
+            object: array_data.into(),
             _data: PhantomData,
         })
     }
@@ -118,5 +115,22 @@ impl<'a, T: IsObjectRef> TryFrom<RetValue> for Array<T> {
             object: object_ref,
             _data: PhantomData,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Array;
+    use crate::function::Result;
+    use crate::string::String;
+
+    #[test]
+    fn create_array_and_get() -> Result<()> {
+        let vec: Vec<String> = vec!["foo".into(), "bar".into(), "baz".into()];
+        let array = Array::from_vec(vec)?;
+        assert_eq!(array.get(0)?.to_string(), "foo");
+        assert_eq!(array.get(1)?.to_string(), "bar");
+        assert_eq!(array.get(2)?.to_string(), "baz");
+        Ok(())
     }
 }

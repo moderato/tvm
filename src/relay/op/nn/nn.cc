@@ -33,10 +33,11 @@
 #include <tvm/topi/nn/flatten.h>
 #include <tvm/topi/nn/softmax.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
-#include "../../transforms/infer_layout_util.h"
+#include "../../transforms/infer_layout_utils.h"
 #include "../make_op.h"
 #include "../op_common.h"
 #include "../type_relations.h"
@@ -49,17 +50,17 @@ TVM_REGISTER_NODE_TYPE(BiasAddAttrs);
 
 bool BiasAddRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                 const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 3);
+  ICHECK_EQ(types.size(), 3);
   const auto* data = types[0].as<TensorTypeNode>();
   if (data == nullptr) return false;
 
   const BiasAddAttrs* param = attrs.as<BiasAddAttrs>();
-  CHECK(param != nullptr);
+  ICHECK(param != nullptr);
   int axis = param->axis;
   if (axis < 0) {
     axis = data->shape.size() + axis;
   }
-  CHECK_LE(axis, static_cast<int>(data->shape.size()))
+  ICHECK_LE(axis, static_cast<int>(data->shape.size()))
       << "axis " << param->axis << " is out of range";
 
   // assign output type
@@ -106,15 +107,15 @@ Expr MakeFIFOBuffer(Expr input, Expr buffer, int axis) {
 
 bool FIFOBufferRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                    const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 3);
+  ICHECK_EQ(types.size(), 3);
   const auto* input = types[0].as<TensorTypeNode>();
   const auto* buffer = types[1].as<TensorTypeNode>();
   const FIFOBufferAttrs* param = attrs.as<FIFOBufferAttrs>();
   if (input == nullptr || buffer == nullptr) {
     return false;
   }
-  CHECK(param != nullptr);
-  CHECK_EQ(input->shape.size(), buffer->shape.size());
+  ICHECK(param != nullptr);
+  ICHECK_EQ(input->shape.size(), buffer->shape.size());
 
   const size_t buffer_axis = static_cast<size_t>(
       param->axis < 0 ? static_cast<int>(buffer->shape.size()) + param->axis : param->axis);
@@ -220,14 +221,14 @@ TVM_REGISTER_NODE_TYPE(PReluAttrs);
 
 bool PReluRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
               const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 3);
+  ICHECK_EQ(types.size(), 3);
   const auto* data = types[0].as<TensorTypeNode>();
   if (data == nullptr) return false;
 
   const PReluAttrs* param = attrs.as<PReluAttrs>();
-  CHECK(param != nullptr);
+  ICHECK(param != nullptr);
 
-  CHECK(param->axis < static_cast<int>(data->shape.size()))
+  ICHECK(param->axis < static_cast<int>(data->shape.size()))
       << "Wrong axis (" << param->axis << ")value.";
 
   // assign alpha type
@@ -244,11 +245,11 @@ Array<Array<Layout>> PReluInferCorrectLayout(const Attrs& attrs,
                                              const Array<Layout>& new_in_layouts,
                                              const Array<Layout>& old_in_layouts,
                                              const Array<tvm::relay::Type>& old_in_types) {
-  CHECK_EQ(old_in_layouts.size(), 2U);
-  CHECK_EQ(old_in_types.size(), 2U);
+  ICHECK_EQ(old_in_layouts.size(), 2U);
+  ICHECK_EQ(old_in_types.size(), 2U);
   Layout data_layout = old_in_layouts[0];
   if (new_in_layouts.defined()) {
-    CHECK_EQ(new_in_layouts.size(), 2U);
+    ICHECK_EQ(new_in_layouts.size(), 2U);
   }
   return Array<Array<Layout>>{{data_layout, Layout("C")}, {data_layout}};
 }
@@ -334,8 +335,8 @@ RELAY_REGISTER_OP("nn.log_softmax")
     .set_attr<FTVMCompute>("FTVMCompute", [](const Attrs& attrs, const Array<te::Tensor>& inputs,
                                              const Type& out_type) {
       const auto* param = attrs.as<SoftmaxAttrs>();
-      CHECK(param != nullptr);
-      CHECK(param->axis == -1 || param->axis == static_cast<int32_t>(inputs[0].ndim()) - 1)
+      ICHECK(param != nullptr);
+      ICHECK(param->axis == -1 || param->axis == static_cast<int32_t>(inputs[0].ndim()) - 1)
           << "log_softmax currently only works on last dimension";
       return Array<te::Tensor>{topi::nn::log_softmax(inputs[0])};
     });
@@ -343,7 +344,7 @@ RELAY_REGISTER_OP("nn.log_softmax")
 // relay.nn.batch_flatten
 bool BatchFlattenRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                      const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 2);
+  ICHECK_EQ(types.size(), 2);
   const auto* data = types[0].as<TensorTypeNode>();
   if (data == nullptr) return false;
   if (data->shape.size() == 0) return false;
@@ -498,7 +499,7 @@ TVM_REGISTER_NODE_TYPE(DropoutAttrs);
 
 bool DropoutRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                 const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 2);
+  ICHECK_EQ(types.size(), 2);
   const auto* data = types[0].as<TensorTypeNode>();
   if (data == nullptr) return false;
 
@@ -543,7 +544,7 @@ Array<Array<Layout>> BatchNormInferCorrectLayout(const Attrs& attrs,
 
   Array<Array<IndexExpr>> old_in_shapes;
   for (auto old_in_t : old_in_types) {
-    CHECK(old_in_t.as<TensorTypeNode>());
+    ICHECK(old_in_t.as<TensorTypeNode>());
     old_in_shapes.push_back(old_in_t.as<TensorTypeNode>()->shape);
   }
 
@@ -571,14 +572,14 @@ Array<Array<Layout>> BatchNormInferCorrectLayout(const Attrs& attrs,
 
 bool BatchNormRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                   const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 6);
+  ICHECK_EQ(types.size(), 6);
   const auto* data = types[0].as<TensorTypeNode>();
   if (data == nullptr) return false;
 
   const BatchNormAttrs* param = attrs.as<BatchNormAttrs>();
 
   // axis of -1 means use the last dimension
-  CHECK(param->axis >= -1 && param->axis < (int)data->shape.size());
+  ICHECK(param->axis >= -1 && param->axis < (int)data->shape.size());
   int axis = (param->axis != -1) ? param->axis : data->shape.size() - 1;
   auto axis_size = data->shape[axis];
 
@@ -665,12 +666,12 @@ TVM_REGISTER_NODE_TYPE(InstanceNormAttrs);
 
 bool InstanceNormRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                      const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 4);
+  ICHECK_EQ(types.size(), 4);
   const auto* data = types[0].as<TensorTypeNode>();
   if (data == nullptr) return false;
   const InstanceNormAttrs* param = attrs.as<InstanceNormAttrs>();
   int axis = param->axis >= 0 ? param->axis : param->axis + data->shape.size();
-  CHECK(axis >= 0 && axis < (int)data->shape.size());
+  ICHECK(axis >= 0 && axis < (int)data->shape.size());
   reporter->Assign(types[1], TensorType({data->shape[axis]}, data->dtype));
   reporter->Assign(types[2], TensorType({data->shape[axis]}, data->dtype));
   reporter->Assign(types[3], TensorType(data->shape, data->dtype));
@@ -732,12 +733,12 @@ TVM_REGISTER_NODE_TYPE(LayerNormAttrs);
 
 bool LayerNormRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                   const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 4);
+  ICHECK_EQ(types.size(), 4);
   const auto* data = types[0].as<TensorTypeNode>();
   if (data == nullptr) return false;
   const LayerNormAttrs* param = attrs.as<LayerNormAttrs>();
   int axis = param->axis >= 0 ? param->axis : param->axis + data->shape.size();
-  CHECK(axis >= 0 && axis < (int)data->shape.size());
+  ICHECK(axis >= 0 && axis < (int)data->shape.size());
   reporter->Assign(types[1], TensorType({data->shape[axis]}, data->dtype));
   reporter->Assign(types[2], TensorType({data->shape[axis]}, data->dtype));
   reporter->Assign(types[3], TensorType(data->shape, data->dtype));
@@ -777,12 +778,12 @@ TVM_REGISTER_NODE_TYPE(GroupNormAttrs);
 
 bool GroupNormRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                   const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 4);
+  ICHECK_EQ(types.size(), 4);
   const auto* data = types[0].as<TensorTypeNode>();
   if (data == nullptr) return false;
   const GroupNormAttrs* param = attrs.as<GroupNormAttrs>();
   int axis = param->axis >= 0 ? param->axis : param->axis + data->shape.size();
-  CHECK(axis >= 0 && axis < (int)data->shape.size());
+  ICHECK(axis >= 0 && axis < (int)data->shape.size());
   reporter->Assign(types[1], TensorType({data->shape[axis]}, data->dtype));
   reporter->Assign(types[2], TensorType({data->shape[axis]}, data->dtype));
   reporter->Assign(types[3], TensorType(data->shape, data->dtype));
@@ -846,20 +847,36 @@ If the input has size k on axis 1, then both gamma and beta have shape (k,).
 // relay.nn.batch_matmul
 bool BatchMatmulRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                     const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 3);
+  ICHECK_EQ(types.size(), 3);
   const auto* x = types[0].as<TensorTypeNode>();
   const auto* y = types[1].as<TensorTypeNode>();
   if (x == nullptr || y == nullptr) return false;
-  CHECK(x->shape.size() == 3 && y->shape.size() == 3);
-  CHECK(reporter->AssertEQ(x->shape[0], y->shape[0]))
-      << "BatchDot: batch dimension doesn't match, "
-      << " x shape=" << x->shape << ", y shape=" << y->shape;
-  CHECK(reporter->AssertEQ(x->shape[2], y->shape[2]))
-      << "BatchDot: shapes of x and y is inconsistent, "
-      << " x shape=" << x->shape << ", y shape=" << y->shape;
+  ICHECK(x->shape.size() == 3 && y->shape.size() == 3);
+  bool is_dyn = false;
+  Array<tvm::PrimExpr> oshape;
+  for (size_t i = 0; i < 3; ++i) {
+    if (x->shape[i].as<tir::AnyNode>() != nullptr || y->shape[i].as<tir::AnyNode>() != nullptr) {
+      is_dyn = true;
+      oshape.push_back(Any());
+    } else {
+      if (i == 0) {
+        oshape.push_back(max(x->shape[i], y->shape[i]));
+      } else {
+        oshape.push_back(x->shape[i]);
+      }
+    }
+  }
+  if (!is_dyn) {
+    ICHECK(reporter->AssertEQ(x->shape[0], y->shape[0]) || reporter->AssertEQ(x->shape[0], 1) ||
+           reporter->AssertEQ(y->shape[0], 1))
+        << "BatchDot: batch dimensions don't match, "
+        << " x shape=" << x->shape << ", y shape=" << y->shape;
+    ICHECK(reporter->AssertEQ(x->shape[2], y->shape[2]))
+        << "BatchDot: shapes of x and y is inconsistent, "
+        << " x shape=" << x->shape << ", y shape=" << y->shape;
 
-  Array<tvm::PrimExpr> oshape = x->shape;
-  oshape.Set(2, y->shape[1]);
+    oshape.Set(2, y->shape[1]);
+  }
 
   // assign output type
   reporter->Assign(types[2], TensorType(oshape, x->dtype));
@@ -896,19 +913,19 @@ are data in batch.
 // relay.nn.cross_entropy
 bool CrossEntropyRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                      const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 3);
+  ICHECK_EQ(types.size(), 3);
   const auto* x = types[0].as<TensorTypeNode>();
   const auto* y = types[1].as<TensorTypeNode>();
   if (x == nullptr || y == nullptr) return false;
-  CHECK(x->shape.size() == 2 && y->shape.size() == 2)
+  ICHECK(x->shape.size() == 2 && y->shape.size() == 2)
       << "CrossEntropy: shapes of x and y is inconsistent, "
       << "x shape = " << x->shape << ", "
       << "y shape = " << y->shape;
-  CHECK(reporter->AssertEQ(x->shape[0], y->shape[0]))
+  ICHECK(reporter->AssertEQ(x->shape[0], y->shape[0]))
       << "CrossEntropy: shapes of x and y is inconsistent, "
       << "x shape = " << x->shape << ", "
       << "y shape = " << y->shape;
-  CHECK(reporter->AssertEQ(x->shape[1], y->shape[1]))
+  ICHECK(reporter->AssertEQ(x->shape[1], y->shape[1]))
       << "CrossEntropy: shapes of x and y is inconsistent, "
       << "x shape = " << x->shape << ", "
       << "y shape = " << y->shape;
@@ -941,11 +958,11 @@ TVM_REGISTER_NODE_TYPE(DilateAttrs);
 
 bool DilateRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 2);
+  ICHECK_EQ(types.size(), 2);
   const auto* x = types[0].as<TensorTypeNode>();
   const DilateAttrs* param = attrs.as<DilateAttrs>();
   if (x == nullptr) return false;
-  CHECK_EQ(x->shape.size(), param->strides.size());
+  ICHECK_EQ(x->shape.size(), param->strides.size());
 
   std::vector<IndexExpr> oshape;
   for (size_t i = 0; i < param->strides.size(); ++i) {
@@ -961,9 +978,10 @@ bool DilateRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
 }
 
 // Positional relay function to create dilate operator used by frontend FFI.
-Expr MakeDilate(Expr data, Array<IndexExpr> strides) {
+Expr MakeDilate(Expr data, Array<IndexExpr> strides, double dilation_value = 0.0) {
   auto attrs = make_object<DilateAttrs>();
   attrs->strides = std::move(strides);
+  attrs->dilation_value = std::move(dilation_value);
   static const Op& op = Op::Get("nn.dilate");
   return Call(op, {data}, Attrs(attrs), {});
 }
@@ -972,7 +990,7 @@ TVM_REGISTER_GLOBAL("relay.op.nn._make.dilate").set_body_typed(MakeDilate);
 
 RELAY_REGISTER_OP("nn.dilate")
     .describe(R"code(
-Dilate data with zeros.
+Dilate data with given dilation value (0 by default).
 )code" TVM_ADD_FILELINE)
     .set_num_inputs(1)
     .add_argument("x", "1D Tensor", "Data to dilate.")
@@ -1004,25 +1022,31 @@ TVM_REGISTER_NODE_TYPE(SubPixelAttrs);
 
 bool DepthToSpaceRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                      const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 2);
+  ICHECK_EQ(types.size(), 2);
   const auto* data = types[0].as<TensorTypeNode>();
   if (data == nullptr) return false;
 
   static const Layout kNCHW("NCHW");
 
   const SubPixelAttrs* param = attrs.as<SubPixelAttrs>();
-  CHECK(param != nullptr);
+  ICHECK(param != nullptr);
   const int block_size = param->block_size;
   const Layout in_layout(param->layout);
   auto layout_converter = tir::BijectiveLayout(in_layout, kNCHW);
-  CHECK(layout_converter.defined())
+  ICHECK(layout_converter.defined())
       << "DepthToSpace only support input layouts that are convertible from NCHW."
       << " But got " << in_layout;
 
   auto oshape = layout_converter.ForwardShape(data->shape);
-  oshape.Set(1, indexdiv(oshape[1], (block_size * block_size)));
-  oshape.Set(2, oshape[2] * block_size);
-  oshape.Set(3, oshape[3] * block_size);
+  if (!oshape[1].as<tir::AnyNode>()) {
+    oshape.Set(1, indexdiv(oshape[1], (block_size * block_size)));
+  }
+  if (!oshape[2].as<tir::AnyNode>()) {
+    oshape.Set(2, oshape[2] * block_size);
+  }
+  if (!oshape[3].as<tir::AnyNode>()) {
+    oshape.Set(3, oshape[3] * block_size);
+  }
 
   // Assign output type
   reporter->Assign(types[1], TensorType(layout_converter.BackwardShape(oshape), data->dtype));
@@ -1061,25 +1085,31 @@ RELAY_REGISTER_OP("nn.depth_to_space")
 
 bool SpaceToDepthRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                      const TypeReporter& reporter) {
-  CHECK_EQ(types.size(), 2);
+  ICHECK_EQ(types.size(), 2);
   const auto* data = types[0].as<TensorTypeNode>();
   if (data == nullptr) return false;
 
   static const Layout kNCHW("NCHW");
 
   const SubPixelAttrs* param = attrs.as<SubPixelAttrs>();
-  CHECK(param != nullptr);
+  ICHECK(param != nullptr);
   const int block_size = param->block_size;
   const Layout in_layout(param->layout);
   auto layout_converter = tir::BijectiveLayout(in_layout, kNCHW);
-  CHECK(layout_converter.defined())
+  ICHECK(layout_converter.defined())
       << "SpaceToDepth only support input layouts that are convertible from NCHW."
       << " But got " << in_layout;
 
   auto oshape = layout_converter.ForwardShape(data->shape);
-  oshape.Set(1, oshape[1] * (block_size * block_size));
-  oshape.Set(2, indexdiv(oshape[2], block_size));
-  oshape.Set(3, indexdiv(oshape[3], block_size));
+  if (!oshape[1].as<tir::AnyNode>()) {
+    oshape.Set(1, oshape[1] * (block_size * block_size));
+  }
+  if (!oshape[2].as<tir::AnyNode>()) {
+    oshape.Set(2, indexdiv(oshape[2], block_size));
+  }
+  if (!oshape[3].as<tir::AnyNode>()) {
+    oshape.Set(3, indexdiv(oshape[3], block_size));
+  }
 
   // Assign output type
   reporter->Assign(types[1], TensorType(layout_converter.BackwardShape(oshape), data->dtype));

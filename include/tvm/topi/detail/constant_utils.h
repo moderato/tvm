@@ -76,7 +76,7 @@ inline std::vector<int> GetConstIntValues(Array<PrimExpr> exprs, const std::stri
   std::vector<int> result;
   if (!exprs.defined()) return result;
   for (auto expr : exprs) {
-    CHECK(IsConstInt(expr)) << "All elements of " << var_name << " must be constant integers";
+    ICHECK(IsConstInt(expr)) << "All elements of " << var_name << " must be constant integers";
     result.push_back(GetConstInt(expr));
   }
   return result;
@@ -96,7 +96,7 @@ inline std::vector<int64_t> GetConstInt64Values(Array<PrimExpr> exprs,
   std::vector<int64_t> result;
   if (!exprs.defined()) return result;
   for (auto expr : exprs) {
-    CHECK(IsConstInt(expr)) << "All elements of " << var_name << " must be constant integers";
+    ICHECK(IsConstInt(expr)) << "All elements of " << var_name << " must be constant integers";
     result.push_back(GetConstInt(expr));
   }
   return result;
@@ -115,8 +115,10 @@ inline bool EqualCheck(PrimExpr lhs, PrimExpr rhs) {
   tvm::tir::ExprDeepEqual expr_equal;
   bool result = expr_equal(lhs, rhs);
   if (!result) {
-    PrimExpr zero(0);
-    result = expr_equal(tvm::arith::Analyzer().Simplify(lhs - rhs), zero);
+    PrimExpr t = tvm::arith::Analyzer().Simplify(lhs - rhs);
+    if (const IntImmNode* i = t.as<IntImmNode>()) {
+      result = i->value == 0;
+    }
   }
   return result;
 }

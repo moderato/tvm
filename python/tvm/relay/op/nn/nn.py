@@ -14,7 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#pylint: disable=invalid-name, too-many-lines
+# pylint: disable=invalid-name, too-many-lines
 """Neural network operations."""
 from tvm.relay import expr
 
@@ -24,18 +24,20 @@ from .util import get_pad_tuple1d, get_pad_tuple2d, get_pad_tuple3d
 from ...expr import const, Expr
 
 
-def conv1d(data,
-           weight,
-           strides=1,
-           padding=0,
-           dilation=1,
-           groups=1,
-           channels=None,
-           kernel_size=None,
-           data_layout="NCW",
-           kernel_layout="OIW",
-           out_layout="",
-           out_dtype=""):
+def conv1d(
+    data,
+    weight,
+    strides=1,
+    padding=0,
+    dilation=1,
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCW",
+    kernel_layout="OIW",
+    out_layout="",
+    out_dtype="",
+):
     r"""1D convolution.
 
     This operator takes the weight as the convolution kernel
@@ -105,29 +107,42 @@ def conv1d(data,
         The computed result.
     """
     if isinstance(kernel_size, int):
-        kernel_size = (kernel_size, )
+        kernel_size = (kernel_size,)
     if isinstance(strides, int):
-        strides = (strides, )
+        strides = (strides,)
     if isinstance(dilation, int):
-        dilation = (dilation, )
+        dilation = (dilation,)
     padding = get_pad_tuple1d(padding)
-    return _make.conv1d(data, weight, strides, padding, dilation,
-                        groups, channels, kernel_size, data_layout,
-                        kernel_layout, out_layout, out_dtype)
+    return _make.conv1d(
+        data,
+        weight,
+        strides,
+        padding,
+        dilation,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        out_dtype,
+    )
 
 
-def conv2d(data,
-           weight,
-           strides=(1, 1),
-           padding=(0, 0),
-           dilation=(1, 1),
-           groups=1,
-           channels=None,
-           kernel_size=None,
-           data_layout="NCHW",
-           kernel_layout="OIHW",
-           out_layout="",
-           out_dtype=""):
+def conv2d(
+    data,
+    weight,
+    strides=(1, 1),
+    padding=(0, 0),
+    dilation=(1, 1),
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCHW",
+    kernel_layout="OIHW",
+    out_layout="",
+    out_dtype="",
+):
     r"""2D convolution.
 
     This operator takes the weight as the convolution kernel
@@ -316,24 +331,37 @@ def conv3d(data,
     if isinstance(dilation, int):
         dilation = (dilation, dilation, dilation)
     padding = get_pad_tuple3d(padding)
-    return _make.conv3d(data, weight, strides, padding, dilation,
-                        groups, channels, kernel_size, data_layout,
-                        kernel_layout, out_layout, out_dtype)
+    return _make.conv3d(
+        data,
+        weight,
+        strides,
+        padding,
+        dilation,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        out_dtype,
+    )
 
 
-def contrib_conv3d_winograd_without_weight_transform(data,
-                                                     weight,
-                                                     tile_size,
-                                                     strides=(1, 1, 1),
-                                                     padding=(0, 0, 0),
-                                                     dilation=(1, 1, 1),
-                                                     groups=1,
-                                                     channels=None,
-                                                     kernel_size=None,
-                                                     data_layout="NCDHW",
-                                                     kernel_layout="OIDHW",
-                                                     out_layout="",
-                                                     out_dtype=""):
+def contrib_conv3d_winograd_without_weight_transform(
+    data,
+    weight,
+    tile_size,
+    strides=(1, 1, 1),
+    padding=(0, 0, 0),
+    dilation=(1, 1, 1),
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCDHW",
+    kernel_layout="OIDHW",
+    out_layout="",
+    out_dtype="",
+):
     r"""3D convolution with winograd algorithm.
 
     The basic parameters are the same as the ones in vanilla conv3d.
@@ -388,23 +416,37 @@ def contrib_conv3d_winograd_without_weight_transform(data,
     # convert 3-way padding to 6-way padding
     padding = get_pad_tuple3d(padding)
     return _make.contrib_conv3d_winograd_without_weight_transform(
-        data, weight, tile_size, strides, padding, dilation,
-        groups, channels, kernel_size, data_layout,
-        kernel_layout, out_layout, out_dtype)
+        data,
+        weight,
+        tile_size,
+        strides,
+        padding,
+        dilation,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        out_dtype,
+    )
 
-def conv3d_transpose(data,
-                     weight,
-                     strides=(1, 1, 1),
-                     padding=(0, 0, 0),
-                     dilation=(1, 1, 1),
-                     groups=1,
-                     channels=None,
-                     kernel_size=None,
-                     data_layout="NCDHW",
-                     kernel_layout="OIDHW",
-                     out_layout="",
-                     output_padding=(0, 0, 0),
-                     out_dtype=""):
+
+def conv3d_transpose(
+    data,
+    weight,
+    strides=(1, 1, 1),
+    padding=(0, 0, 0),
+    dilation=(1, 1, 1),
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCDHW",
+    kernel_layout="OIDHW",
+    out_layout="",
+    output_padding=(0, 0, 0),
+    out_dtype="",
+):
     r"""3D transpose convolution.
 
     Parameters
@@ -459,23 +501,38 @@ def conv3d_transpose(data,
         dilation = (dilation, dilation, dilation)
     padding = get_pad_tuple3d(padding)
 
-    return _make.conv3d_transpose(data, weight, strides, padding, dilation,
-                                  groups, channels, kernel_size, data_layout,
-                                  kernel_layout, out_layout, output_padding, out_dtype)
+    return _make.conv3d_transpose(
+        data,
+        weight,
+        strides,
+        padding,
+        dilation,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        output_padding,
+        out_dtype,
+    )
 
-def conv2d_transpose(data,
-                     weight,
-                     strides=(1, 1),
-                     padding=(0, 0),
-                     dilation=(1, 1),
-                     groups=1,
-                     channels=None,
-                     kernel_size=None,
-                     data_layout="NCHW",
-                     kernel_layout="OIHW",
-                     out_layout="",
-                     output_padding=(0, 0),
-                     out_dtype=""):
+
+def conv2d_transpose(
+    data,
+    weight,
+    strides=(1, 1),
+    padding=(0, 0),
+    dilation=(1, 1),
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCHW",
+    kernel_layout="OIHW",
+    out_layout="",
+    output_padding=(0, 0),
+    out_dtype="",
+):
     """Two dimensional transposed convolution operator.
 
     Parameters
@@ -526,24 +583,38 @@ def conv2d_transpose(data,
     """
     # convert 2-way padding to 4-way padding
     padding = get_pad_tuple2d(padding)
-    return _make.conv2d_transpose(data, weight, strides, padding, dilation,
-                                  groups, channels, kernel_size, data_layout,
-                                  kernel_layout, out_layout, output_padding, out_dtype)
+    return _make.conv2d_transpose(
+        data,
+        weight,
+        strides,
+        padding,
+        dilation,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        output_padding,
+        out_dtype,
+    )
 
 
-def conv1d_transpose(data,
-                     weight,
-                     strides=(1,),
-                     padding=(0,),
-                     dilation=(1,),
-                     groups=1,
-                     channels=None,
-                     kernel_size=None,
-                     data_layout="NCW",
-                     kernel_layout="OIW",
-                     out_layout="",
-                     output_padding=(0,),
-                     out_dtype=""):
+def conv1d_transpose(
+    data,
+    weight,
+    strides=(1,),
+    padding=(0,),
+    dilation=(1,),
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCW",
+    kernel_layout="OIW",
+    out_layout="",
+    output_padding=(0,),
+    out_dtype="",
+):
     """One dimensional transposed convolution operator.
 
     Parameters
@@ -592,9 +663,21 @@ def conv1d_transpose(data,
     result : tvm.relay.Expr
         The computed result.
     """
-    return _make.conv1d_transpose(data, weight, strides, padding, dilation,
-                                  groups, channels, kernel_size, data_layout,
-                                  kernel_layout, out_layout, output_padding, out_dtype)
+    return _make.conv1d_transpose(
+        data,
+        weight,
+        strides,
+        padding,
+        dilation,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        output_padding,
+        out_dtype,
+    )
 
 
 def softmax(data, axis=-1):
@@ -647,12 +730,7 @@ def log_softmax(data, axis=-1):
     return _make.log_softmax(data, axis)
 
 
-def max_pool1d(data,
-               pool_size=(1,),
-               strides=(1,),
-               padding=(0,),
-               layout="NCW",
-               ceil_mode=False):
+def max_pool1d(data, pool_size=(1,), strides=(1,), padding=(0,), layout="NCW", ceil_mode=False):
     r"""1D maximum pooling operator.
 
     This operator takes data as input and does 1D max value calculation
@@ -696,16 +774,12 @@ def max_pool1d(data,
     if isinstance(strides, int):
         strides = (strides,)
     padding = get_pad_tuple1d(padding)
-    return _make.max_pool1d(data, pool_size, strides, padding,
-                            layout, ceil_mode)
+    return _make.max_pool1d(data, pool_size, strides, padding, layout, ceil_mode)
 
 
-def max_pool2d(data,
-               pool_size=(1, 1),
-               strides=(1, 1),
-               padding=(0, 0),
-               layout="NCHW",
-               ceil_mode=False):
+def max_pool2d(
+    data, pool_size=(1, 1), strides=(1, 1), padding=(0, 0), layout="NCHW", ceil_mode=False
+):
     r"""2D maximum pooling operator.
 
     This operator takes data as input and does 2D max value calculation
@@ -757,15 +831,12 @@ def max_pool2d(data,
     if isinstance(strides, int):
         strides = (strides, strides)
     padding = get_pad_tuple2d(padding)
-    return _make.max_pool2d(data, pool_size, strides, padding,
-                            layout, ceil_mode)
+    return _make.max_pool2d(data, pool_size, strides, padding, layout, ceil_mode)
 
-def max_pool3d(data,
-               pool_size=(1, 1, 1),
-               strides=(1, 1, 1),
-               padding=(0, 0, 0),
-               layout="NCDHW",
-               ceil_mode=False):
+
+def max_pool3d(
+    data, pool_size=(1, 1, 1), strides=(1, 1, 1), padding=(0, 0, 0), layout="NCDHW", ceil_mode=False
+):
     r"""3D maximum pooling operator.
 
     This operator takes data as input and does 3D max value calculation
@@ -810,17 +881,18 @@ def max_pool3d(data,
     if isinstance(strides, int):
         strides = (strides, strides, strides)
     padding = get_pad_tuple3d(padding)
-    return _make.max_pool3d(data, pool_size, strides, padding,
-                            layout, ceil_mode)
+    return _make.max_pool3d(data, pool_size, strides, padding, layout, ceil_mode)
 
 
-def avg_pool1d(data,
-               pool_size=(1,),
-               strides=(1,),
-               padding=(0,),
-               layout="NCW",
-               ceil_mode=False,
-               count_include_pad=False):
+def avg_pool1d(
+    data,
+    pool_size=(1,),
+    strides=(1,),
+    padding=(0,),
+    layout="NCW",
+    ceil_mode=False,
+    count_include_pad=False,
+):
     r"""1D average pooling operator.
 
     This operator takes data as input and does 1D average value calculation
@@ -867,17 +939,18 @@ def avg_pool1d(data,
     if isinstance(strides, int):
         strides = (strides,)
     padding = get_pad_tuple1d(padding)
-    return _make.avg_pool1d(data, pool_size, strides, padding,
-                            layout, ceil_mode, count_include_pad)
+    return _make.avg_pool1d(data, pool_size, strides, padding, layout, ceil_mode, count_include_pad)
 
 
-def avg_pool2d(data,
-               pool_size=(1, 1),
-               strides=(1, 1),
-               padding=(0, 0),
-               layout="NCHW",
-               ceil_mode=False,
-               count_include_pad=False):
+def avg_pool2d(
+    data,
+    pool_size=(1, 1),
+    strides=(1, 1),
+    padding=(0, 0),
+    layout="NCHW",
+    ceil_mode=False,
+    count_include_pad=False,
+):
     r"""2D average pooling operator.
 
     This operator takes data as input and does 2D average value calculation
@@ -933,16 +1006,18 @@ def avg_pool2d(data,
     if isinstance(strides, int):
         strides = (strides, strides)
     padding = get_pad_tuple2d(padding)
-    return _make.avg_pool2d(data, pool_size, strides, padding,
-                            layout, ceil_mode, count_include_pad)
+    return _make.avg_pool2d(data, pool_size, strides, padding, layout, ceil_mode, count_include_pad)
 
-def avg_pool3d(data,
-               pool_size=(1, 1, 1),
-               strides=(1, 1, 1),
-               padding=(0, 0, 0),
-               layout="NCDHW",
-               ceil_mode=False,
-               count_include_pad=False):
+
+def avg_pool3d(
+    data,
+    pool_size=(1, 1, 1),
+    strides=(1, 1, 1),
+    padding=(0, 0, 0),
+    layout="NCDHW",
+    ceil_mode=False,
+    count_include_pad=False,
+):
     r"""3D average pooling operator.
 
     This operator takes data as input and does 3D average value calculation
@@ -990,16 +1065,12 @@ def avg_pool3d(data,
     if isinstance(strides, int):
         strides = (strides, strides, strides)
     padding = get_pad_tuple3d(padding)
-    return _make.avg_pool3d(data, pool_size, strides, padding,
-                            layout, ceil_mode, count_include_pad)
+    return _make.avg_pool3d(data, pool_size, strides, padding, layout, ceil_mode, count_include_pad)
 
-def max_pool2d_grad(out_grad,
-                    data,
-                    pool_size=(1, 1),
-                    strides=(1, 1),
-                    padding=(0, 0),
-                    layout="NCHW",
-                    ceil_mode=False):
+
+def max_pool2d_grad(
+    out_grad, data, pool_size=(1, 1), strides=(1, 1), padding=(0, 0), layout="NCHW", ceil_mode=False
+):
     r"""Gradient of 2D maximum pooling operator.
 
     This operator takes out_grad and data as input and calculates gradient of max_pool2d.
@@ -1032,17 +1103,19 @@ def max_pool2d_grad(out_grad,
     result : tvm.relay.Expr
         The computed result.
     """
-    return _make.max_pool2d_grad(out_grad, data, pool_size, strides, padding,
-                                 layout, ceil_mode)
+    return _make.max_pool2d_grad(out_grad, data, pool_size, strides, padding, layout, ceil_mode)
 
-def avg_pool2d_grad(out_grad,
-                    data,
-                    pool_size=(1, 1),
-                    strides=(1, 1),
-                    padding=(0, 0),
-                    layout="NCHW",
-                    ceil_mode=False,
-                    count_include_pad=False):
+
+def avg_pool2d_grad(
+    out_grad,
+    data,
+    pool_size=(1, 1),
+    strides=(1, 1),
+    padding=(0, 0),
+    layout="NCHW",
+    ceil_mode=False,
+    count_include_pad=False,
+):
     r"""Gradient of 2D average pooling operator.
 
     This operator takes out_grad and data as input and calculates gradient of avg_pool2d.
@@ -1078,11 +1151,12 @@ def avg_pool2d_grad(out_grad,
     result : tvm.relay.Expr
         The computed result.
     """
-    return _make.avg_pool2d_grad(out_grad, data, pool_size, strides, padding,
-                                 layout, ceil_mode, count_include_pad)
+    return _make.avg_pool2d_grad(
+        out_grad, data, pool_size, strides, padding, layout, ceil_mode, count_include_pad
+    )
 
-def global_max_pool2d(data,
-                      layout="NCHW"):
+
+def global_max_pool2d(data, layout="NCHW"):
     r"""2D global maximum pooling operator.
 
     This operator takes data as input and does 2D max value calculation
@@ -1115,8 +1189,8 @@ def global_max_pool2d(data,
     """
     return _make.global_max_pool2d(data, layout)
 
-def global_avg_pool2d(data,
-                      layout="NCHW"):
+
+def global_avg_pool2d(data, layout="NCHW"):
     r"""2D global average pooling operator.
 
     This operator takes data as input and does 2D average value calculation
@@ -1150,12 +1224,9 @@ def global_avg_pool2d(data,
     return _make.global_avg_pool2d(data, layout)
 
 
-def upsampling(data,
-               scale_h=1,
-               scale_w=1,
-               layout="NCHW",
-               method="nearest_neighbor",
-               align_corners=False):
+def upsampling(
+    data, scale_h=1, scale_w=1, layout="NCHW", method="nearest_neighbor", align_corners=False
+):
     """Upsampling.
 
     This operator takes data as input and does 2D scaling to the given scale factor.
@@ -1200,13 +1271,15 @@ def upsampling(data,
     return _make.upsampling(data, scale_h, scale_w, layout, method, align_corners)
 
 
-def upsampling3d(data,
-                 scale_d=1,
-                 scale_h=1,
-                 scale_w=1,
-                 layout="NCDHW",
-                 method="nearest_neighbor",
-                 coordinate_transformation_mode="half_pixel"):
+def upsampling3d(
+    data,
+    scale_d=1,
+    scale_h=1,
+    scale_w=1,
+    layout="NCDHW",
+    method="nearest_neighbor",
+    coordinate_transformation_mode="half_pixel",
+):
     """3D Upsampling.
 
     This operator takes data as input and does 3D scaling to the given scale factor.
@@ -1248,8 +1321,19 @@ def upsampling3d(data,
     result : tvm.relay.Expr
         The computed result.
     """
-    return _make.upsampling3d(data, scale_d, scale_h, scale_w, layout, method,
-                              coordinate_transformation_mode)
+    if isinstance(scale_d, Expr) or isinstance(scale_h, Expr) or isinstance(scale_w, Expr):
+        if not isinstance(scale_d, Expr):
+            scale_d = const(scale_d, "float64")
+        if not isinstance(scale_h, Expr):
+            scale_h = const(scale_h, "float64")
+        if not isinstance(scale_w, Expr):
+            scale_w = const(scale_w, "float64")
+        return _dyn_make.upsampling3d(
+            data, scale_d, scale_h, scale_w, layout, method, coordinate_transformation_mode
+        )
+    return _make.upsampling3d(
+        data, scale_d, scale_h, scale_w, layout, method, coordinate_transformation_mode
+    )
 
 
 def batch_flatten(data):
@@ -1307,21 +1391,24 @@ def dense(data, weight, units=None, out_dtype=""):
 
     .. math::
 
-    `Y = X * W`
+    `Y = X * W^T`
 
     Parameters
     ----------
     data : tvm.relay.Expr
-        The input data to the operator.
+        The input data to the operator,
+        of shape `(d_1, d_2, ..., d_n, units_in)`.
 
     weight : tvm.relay.Expr
-        The weight expressions.
+        The weight expressions, 2-D matrix,
+        of shape `(units, units_in)`.
 
     units : int, optional
         Number of hidden units of the dense transformation.
 
     out_dtype : str, optional
-        Specifies the output data type for mixed precision dense.
+        Specifies the output data type for mixed precision dense,
+        of shape `(d_1, d_2, ..., d_n, units)`.
 
     Returns
     -------
@@ -1435,10 +1522,7 @@ def prelu(data, alpha, axis=1):
     return _make.prelu(data, alpha, axis)
 
 
-def pad(data,
-        pad_width,
-        pad_value=0,
-        pad_mode='constant'):
+def pad(data, pad_width, pad_value=0, pad_mode="constant"):
     r"""Padding
 
     This operator takes in a tensor and pads each axis by the specified
@@ -1462,7 +1546,7 @@ def pad(data,
     result : tvm.relay.Expr
         The computed result.
     """
-    if (isinstance(pad_width, Expr) or (isinstance(pad_value, Expr))):
+    if isinstance(pad_width, Expr) or (isinstance(pad_value, Expr)):
         if not isinstance(pad_width, Expr):
             pad_width = const(list(pad_width))
         if not isinstance(pad_value, Expr):
@@ -1471,28 +1555,29 @@ def pad(data,
     return _make.pad(data, pad_width, pad_value, pad_mode)
 
 
-def dilate(data, strides):
-    """Dilate data with zeros.
+def dilate(data, strides, dilation_value=0.0):
+    """Dilate data with given dilation value (0 by default).
 
     Parameters
     ----------
     data : tvm.relay.Expr
         n-D, can be any layout.
 
-    strides : <tuple of <int>
+    strides : tuple of <int>
         Dilation stride on each dimension, 1 means no dilation.
+
+    dilation_value : int/float, optional
+        Value used to dilate the input.
 
     Returns
     -------
     Output : tvm.relay.Expr
         The computed result
     """
-    return _make.dilate(data, strides)
+    return _make.dilate(data, strides, dilation_value)
 
 
-def mirror_pad(data,
-               pad_width,
-               mode="SYMMETRIC"):
+def mirror_pad(data, pad_width, mode="SYMMETRIC"):
     r"""MirrorPadding
 
     This operator takes in a tensor and pads each axis by the specified
@@ -1516,7 +1601,7 @@ def mirror_pad(data,
     return _make.mirror_pad(data, pad_width, mode)
 
 
-def lrn(data, size=5, axis=1, bias=2, alpha=.00001, beta=0.75):
+def lrn(data, size=5, axis=1, bias=2, alpha=0.00001, beta=0.75):
     """This operator takes data as input and does local response normalization.
 
     Normalize the input in a local region across or within feature maps.
@@ -1626,15 +1711,9 @@ def dropout_raw(data, rate=0.5):
     return _make.dropout(data, rate)
 
 
-def batch_norm(data,
-               gamma,
-               beta,
-               moving_mean,
-               moving_var,
-               axis=1,
-               epsilon=1e-5,
-               center=True,
-               scale=True):
+def batch_norm(
+    data, gamma, beta, moving_mean, moving_var, axis=1, epsilon=1e-5, center=True, scale=True
+):
     r"""
     Batch normalization layer (Ioffe and Szegedy, 2014).
     Normalizes the input at each batch, i.e. applies a transformation
@@ -1714,25 +1793,13 @@ def batch_norm(data,
         new running mean (k-length vector),
         and new running variance (k-length vector)
     """
-    result = _make.batch_norm(data,
-                              gamma,
-                              beta,
-                              moving_mean,
-                              moving_var,
-                              axis,
-                              epsilon,
-                              center,
-                              scale)
+    result = _make.batch_norm(
+        data, gamma, beta, moving_mean, moving_var, axis, epsilon, center, scale
+    )
     return expr.TupleWrapper(result, 3)
 
 
-def instance_norm(data,
-                  gamma,
-                  beta,
-                  axis=1,
-                  epsilon=1e-5,
-                  center=True,
-                  scale=True):
+def instance_norm(data, gamma, beta, axis=1, epsilon=1e-5, center=True, scale=True):
     r"""
     Instance Normalization (Ulyanov and et al., 2016)
     Applies instance normalization to the n-dimensional input array.
@@ -1793,13 +1860,7 @@ def instance_norm(data,
     return _make.instance_norm(data, gamma, beta, axis, epsilon, center, scale)
 
 
-def layer_norm(data,
-               gamma,
-               beta,
-               axis=-1,
-               epsilon=1e-5,
-               center=True,
-               scale=True):
+def layer_norm(data, gamma, beta, axis=-1, epsilon=1e-5, center=True, scale=True):
     r"""
     Layer normalization (Lei Ba and et al., 2016).
     Applies layer normalization to the n-dimensional input array.
@@ -1851,14 +1912,7 @@ def layer_norm(data,
     return _make.layer_norm(data, gamma, beta, axis, epsilon, center, scale)
 
 
-def group_norm(data,
-               gamma,
-               beta,
-               num_groups,
-               axis=1,
-               epsilon=1e-5,
-               center=True,
-               scale=True):
+def group_norm(data, gamma, beta, num_groups, axis=1, epsilon=1e-5, center=True, scale=True):
     r"""
     Group normalization normalizes over group of channels for each training examples.
     We can say that, Group Norm is in between Instance Norm and Layer Norm. When we put
@@ -1944,6 +1998,7 @@ def batch_matmul(x, y):
     """
     return _make.batch_matmul(x, y)
 
+
 def sparse_dense(data, weight):
     r"""
     Computes the matrix multiplication of `data` and `weight`, where `data` is
@@ -1967,7 +2022,7 @@ def sparse_dense(data, weight):
     data : tvm.relay.Expr
         The input data for the matrix multiplication
 
-    weight : namedtuple.
+    weight : Union[namedtuple, Tuple[ndarray, ndarray, ndarray]].
         The sparse weight matrix for the matrix multiplication.
 
     Returns
@@ -1975,7 +2030,10 @@ def sparse_dense(data, weight):
     result: tvm.relay.Expr
         The computed result.
     """
-    return _make.sparse_dense(data, weight.data, weight.indices, weight.indptr)
+    if hasattr(weight, "indices"):
+        return _make.sparse_dense(data, weight.data, weight.indices, weight.indptr)
+    return _make.sparse_dense(data, weight[0], weight[1], weight[2])
+
 
 def sparse_transpose(x):
     r"""
@@ -2003,22 +2061,24 @@ def sparse_transpose(x):
         Tuple of output sparse tensor (same shape and format as input),
         i.e. if CSR then output is in ([data, indices, indptr]) form
     """
-    return expr.TupleWrapper(
-        _make.sparse_transpose(x.data, x.indices, x.indptr), 3)
+    return expr.TupleWrapper(_make.sparse_transpose(x.data, x.indices, x.indptr), 3)
 
-def contrib_conv2d_winograd_without_weight_transform(data,
-                                                     weight,
-                                                     tile_size,
-                                                     strides=(1, 1),
-                                                     padding=(0, 0),
-                                                     dilation=(1, 1),
-                                                     groups=1,
-                                                     channels=None,
-                                                     kernel_size=None,
-                                                     data_layout="NCHW",
-                                                     kernel_layout="OIHW",
-                                                     out_layout="",
-                                                     out_dtype=""):
+
+def contrib_conv2d_winograd_without_weight_transform(
+    data,
+    weight,
+    tile_size,
+    strides=(1, 1),
+    padding=(0, 0),
+    dilation=(1, 1),
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCHW",
+    kernel_layout="OIHW",
+    out_layout="",
+    out_dtype="",
+):
     r"""2D convolution with winograd algorithm.
 
     The basic parameters are the same as the ones in vanilla conv2d.
@@ -2073,23 +2133,36 @@ def contrib_conv2d_winograd_without_weight_transform(data,
     # convert 2-way padding to 4-way padding
     padding = get_pad_tuple2d(padding)
     return _make.contrib_conv2d_winograd_without_weight_transform(
-        data, weight, tile_size, strides, padding, dilation,
-        groups, channels, kernel_size, data_layout,
-        kernel_layout, out_layout, out_dtype)
+        data,
+        weight,
+        tile_size,
+        strides,
+        padding,
+        dilation,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        out_dtype,
+    )
 
 
-def contrib_conv2d_gemm_without_weight_transform(data,
-                                                 weight,
-                                                 strides=(1, 1),
-                                                 padding=(0, 0),
-                                                 dilation=(1, 1),
-                                                 groups=1,
-                                                 channels=None,
-                                                 kernel_size=None,
-                                                 data_layout="NCHW",
-                                                 kernel_layout="OIHW",
-                                                 out_layout="",
-                                                 out_dtype=""):
+def contrib_conv2d_gemm_without_weight_transform(
+    data,
+    weight,
+    strides=(1, 1),
+    padding=(0, 0),
+    dilation=(1, 1),
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCHW",
+    kernel_layout="OIHW",
+    out_layout="",
+    out_dtype="",
+):
     r"""2D convolution with gemm algorithm.
 
     The basic parameters are the same as the ones in vanilla conv2d.
@@ -2141,23 +2214,35 @@ def contrib_conv2d_gemm_without_weight_transform(data,
     # convert 2-way padding to 4-way padding
     padding = get_pad_tuple2d(padding)
     return _make.contrib_conv2d_gemm_without_weight_transform(
-        data, weight, strides, padding, dilation,
-        groups, channels, kernel_size, data_layout,
-        kernel_layout, out_layout, out_dtype)
+        data,
+        weight,
+        strides,
+        padding,
+        dilation,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        out_dtype,
+    )
 
 
-def contrib_conv2d_nchwc(data,
-                         kernel,
-                         strides=(1, 1),
-                         padding=(0, 0),
-                         dilation=(1, 1),
-                         groups=1,
-                         channels=None,
-                         kernel_size=None,
-                         data_layout="NCHW8c",
-                         kernel_layout="OIHW",
-                         out_layout="",
-                         out_dtype=""):
+def contrib_conv2d_nchwc(
+    data,
+    kernel,
+    strides=(1, 1),
+    padding=(0, 0),
+    dilation=(1, 1),
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCHW8c",
+    kernel_layout="OIHW",
+    out_layout="",
+    out_dtype="",
+):
     r"""Variant of 2D convolution.
 
     This operator takes the weight as the convolution kernel
@@ -2209,22 +2294,36 @@ def contrib_conv2d_nchwc(data,
     """
     # convert 2-way padding to 4-way padding
     padding = get_pad_tuple2d(padding)
-    return _make.contrib_conv2d_NCHWc(data, kernel, strides, padding, dilation,
-                                      groups, channels, kernel_size, data_layout,
-                                      kernel_layout, out_layout, out_dtype)
+    return _make.contrib_conv2d_NCHWc(
+        data,
+        kernel,
+        strides,
+        padding,
+        dilation,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        out_dtype,
+    )
 
-def contrib_depthwise_conv2d_nchwc(data,
-                                   kernel,
-                                   strides=(1, 1),
-                                   padding=(0, 0),
-                                   dilation=(1, 1),
-                                   groups=1,
-                                   channels=None,
-                                   kernel_size=None,
-                                   data_layout="NCHW8c",
-                                   kernel_layout="OIHW",
-                                   out_layout="",
-                                   out_dtype=""):
+
+def contrib_depthwise_conv2d_nchwc(
+    data,
+    kernel,
+    strides=(1, 1),
+    padding=(0, 0),
+    dilation=(1, 1),
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCHW8c",
+    kernel_layout="OIHW",
+    out_layout="",
+    out_dtype="",
+):
     r"""Variant of 2D depthwise convolution.
 
     This operator takes the weight as the depthwise convolution kernel
@@ -2276,13 +2375,23 @@ def contrib_depthwise_conv2d_nchwc(data,
     """
     # convert 2-way padding to 4-way padding
     padding = get_pad_tuple2d(padding)
-    return _make.contrib_depthwise_conv2d_NCHWc(data, kernel, strides, padding, dilation,
-                                                groups, channels, kernel_size, data_layout,
-                                                kernel_layout, out_layout, out_dtype)
+    return _make.contrib_depthwise_conv2d_NCHWc(
+        data,
+        kernel,
+        strides,
+        padding,
+        dilation,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        out_dtype,
+    )
 
 
-def contrib_conv2d_winograd_weight_transform(weight,
-                                             tile_size):
+def contrib_conv2d_winograd_weight_transform(weight, tile_size):
     r"""Weight Transformation part for 2D convolution with winograd algorithm.
 
     We separate this as a single op to enable pre-compute for inference.
@@ -2327,8 +2436,7 @@ def contrib_conv2d_gemm_weight_transform(weights, tile_rows, tile_cols):
     return _make.contrib_conv2d_gemm_weight_transform(weights, tile_rows, tile_cols)
 
 
-def contrib_conv3d_winograd_weight_transform(weight,
-                                             tile_size):
+def contrib_conv3d_winograd_weight_transform(weight, tile_size):
     r"""Weight Transformation part for 3D convolution with winograd algorithm.
 
     We separate this as a single op to enable pre-compute for inference.
@@ -2350,9 +2458,7 @@ def contrib_conv3d_winograd_weight_transform(weight,
     return _make.contrib_conv3d_winograd_weight_transform(weight, tile_size)
 
 
-def contrib_conv2d_winograd_nnpack_weight_transform(weight,
-                                                    convolution_algorithm,
-                                                    out_dtype=""):
+def contrib_conv2d_winograd_nnpack_weight_transform(weight, convolution_algorithm, out_dtype=""):
     r"""Weight Transformation part for 2D convolution with winograd algorithm.
 
     We separate this as a single op to enable pre-compute for inference.
@@ -2372,24 +2478,27 @@ def contrib_conv2d_winograd_nnpack_weight_transform(weight,
         The computed result.
     """
     return _make.contrib_conv2d_winograd_nnpack_weight_transform(
-        weight, convolution_algorithm, out_dtype)
+        weight, convolution_algorithm, out_dtype
+    )
 
 
-def deformable_conv2d(data,
-                      offset,
-                      weight,
-                      strides=(1, 1),
-                      padding=(0, 0),
-                      dilation=(1, 1),
-                      deformable_groups=1,
-                      groups=1,
-                      channels=None,
-                      kernel_size=None,
-                      data_layout='NCHW',
-                      kernel_layout='OIHW',
-                      out_layout='',
-                      out_dtype=''):
-    r""" Deformable 2d convolution.
+def deformable_conv2d(
+    data,
+    offset,
+    weight,
+    strides=(1, 1),
+    padding=(0, 0),
+    dilation=(1, 1),
+    deformable_groups=1,
+    groups=1,
+    channels=None,
+    kernel_size=None,
+    data_layout="NCHW",
+    kernel_layout="OIHW",
+    out_layout="",
+    out_dtype="",
+):
+    r"""Deformable 2d convolution.
 
     The deformable convolution operation is described in https://arxiv.org/abs/1703.06211
 
@@ -2445,17 +2554,25 @@ def deformable_conv2d(data,
     """
     # convert 2-way padding to 4-way padding
     padding = get_pad_tuple2d(padding)
-    return _make.deformable_conv2d(data, offset, weight, strides, padding, dilation,
-                                   deformable_groups, groups, channels, kernel_size, data_layout,
-                                   kernel_layout, out_layout, out_dtype)
+    return _make.deformable_conv2d(
+        data,
+        offset,
+        weight,
+        strides,
+        padding,
+        dilation,
+        deformable_groups,
+        groups,
+        channels,
+        kernel_size,
+        data_layout,
+        kernel_layout,
+        out_layout,
+        out_dtype,
+    )
 
 
-def bitpack(data,
-            bits=1,
-            pack_axis=1,
-            bit_axis=2,
-            pack_type="uint32",
-            name="BitPack"):
+def bitpack(data, bits=1, pack_axis=1, bit_axis=2, pack_type="uint32", name="BitPack"):
     """Tensor packing for bitserial operations.
 
     The values along the input tensor's pack_axis are quantized
@@ -2496,19 +2613,21 @@ def bitpack(data,
     return _make.bitpack(data, bits, pack_axis, bit_axis, pack_type, name)
 
 
-def bitserial_conv2d(data,
-                     weight,
-                     strides=(1, 1),
-                     padding=(0, 0),
-                     channels=None,
-                     kernel_size=(3, 3),
-                     activation_bits=1,
-                     weight_bits=1,
-                     data_layout='NCHW',
-                     kernel_layout='OIHW',
-                     pack_dtype='uint32',
-                     out_dtype='int16',
-                     unipolar=True):
+def bitserial_conv2d(
+    data,
+    weight,
+    strides=(1, 1),
+    padding=(0, 0),
+    channels=None,
+    kernel_size=(3, 3),
+    activation_bits=1,
+    weight_bits=1,
+    data_layout="NCHW",
+    kernel_layout="OIHW",
+    pack_dtype="uint32",
+    out_dtype="int16",
+    unipolar=True,
+):
     r"""2D convolution using bitserial computation.
 
     Parameters
@@ -2556,20 +2675,33 @@ def bitserial_conv2d(data,
     """
     # convert 2-way padding to 4-way padding
     padding = get_pad_tuple2d(padding)
-    return _make.bitserial_conv2d(data, weight, strides, padding, channels,
-                                  kernel_size, activation_bits, weight_bits,
-                                  data_layout, kernel_layout, pack_dtype,
-                                  out_dtype, unipolar)
+    return _make.bitserial_conv2d(
+        data,
+        weight,
+        strides,
+        padding,
+        channels,
+        kernel_size,
+        activation_bits,
+        weight_bits,
+        data_layout,
+        kernel_layout,
+        pack_dtype,
+        out_dtype,
+        unipolar,
+    )
 
 
-def bitserial_dense(data,
-                    weight,
-                    units=None,
-                    data_bits=1,
-                    weight_bits=1,
-                    pack_dtype='uint32',
-                    out_dtype='int16',
-                    unipolar=True):
+def bitserial_dense(
+    data,
+    weight,
+    units=None,
+    data_bits=1,
+    weight_bits=1,
+    pack_dtype="uint32",
+    out_dtype="int16",
+    unipolar=True,
+):
     """Bitserial Dense operator.
     Applies matrix multiplication of two quantized matrices
     using a fast bitserial algorithm.
@@ -2609,8 +2741,9 @@ def bitserial_dense(data,
     result : tvm.relay.Expr
         The computed result.
     """
-    return _make.bitserial_dense(data, weight, units, data_bits, weight_bits,
-                                 pack_dtype, out_dtype, unipolar)
+    return _make.bitserial_dense(
+        data, weight, units, data_bits, weight_bits, pack_dtype, out_dtype, unipolar
+    )
 
 
 def cross_entropy(predictions, targets):
@@ -2651,7 +2784,7 @@ def cross_entropy_with_logits(predictions, targets):
     return _make.cross_entropy_with_logits(predictions, targets)
 
 
-def depth_to_space(data, block_size, layout='NCHW', mode='DCR'):
+def depth_to_space(data, block_size, layout="NCHW", mode="DCR"):
     """Convert channels into spatial blocks.
 
     Parameters
@@ -2678,7 +2811,7 @@ def depth_to_space(data, block_size, layout='NCHW', mode='DCR'):
     return _make.depth_to_space(data, block_size, layout, mode)
 
 
-def space_to_depth(data, block_size, layout='NCHW'):
+def space_to_depth(data, block_size, layout="NCHW"):
     """Convert spatial blocks into channels.
 
     Parameters
@@ -2701,9 +2834,7 @@ def space_to_depth(data, block_size, layout='NCHW'):
     return _make.space_to_depth(data, block_size, layout)
 
 
-def adaptive_max_pool2d(data,
-                        output_size=None,
-                        layout="NCHW"):
+def adaptive_max_pool2d(data, output_size=None, layout="NCHW"):
     r"""2D adaptive max pooling operator. This operator is experimental.
 
     This operator takes data as input and does 2D max value calculation
@@ -2748,9 +2879,7 @@ def adaptive_max_pool2d(data,
     return _make.adaptive_max_pool2d(data, output_size, layout)
 
 
-def adaptive_avg_pool2d(data,
-                        output_size=None,
-                        layout="NCHW"):
+def adaptive_avg_pool2d(data, output_size=None, layout="NCHW"):
     r"""2D adaptive average pooling operator. This operator is experimental.
 
     This operator takes data as input and does 2D average value calculation
@@ -2795,9 +2924,7 @@ def adaptive_avg_pool2d(data,
     return _make.adaptive_avg_pool2d(data, output_size, layout)
 
 
-def adaptive_max_pool3d(data,
-                        output_size=None,
-                        layout="NCDHW"):
+def adaptive_max_pool3d(data, output_size=None, layout="NCDHW"):
     r"""3D adaptive max pooling operator. This operator is experimental.
 
     This operator takes data as input and does 3D max value calculation
@@ -2841,9 +2968,7 @@ def adaptive_max_pool3d(data,
     return _make.adaptive_max_pool3d(data, output_size, layout)
 
 
-def adaptive_avg_pool3d(data,
-                        output_size=None,
-                        layout="NCDHW"):
+def adaptive_avg_pool3d(data, output_size=None, layout="NCDHW"):
     r"""3D adaptive avg pooling operator. This operator is experimental.
 
     This operator takes data as input and does 3D avg value calculation
@@ -2887,8 +3012,7 @@ def adaptive_avg_pool3d(data,
     return _make.adaptive_avg_pool3d(data, output_size, layout)
 
 
-def global_max_pool3d(data,
-                      layout="NCDHW"):
+def global_max_pool3d(data, layout="NCDHW"):
     r"""3D global maximum pooling operator.
 
     This operator takes data as input and does 3D max value calculation
@@ -2921,8 +3045,7 @@ def global_max_pool3d(data,
     return _make.adaptive_max_pool3d(data, output_size, layout)
 
 
-def global_avg_pool3d(data,
-                      layout="NCDHW"):
+def global_avg_pool3d(data, layout="NCDHW"):
     r"""3D global average pooling operator.
 
     This operator takes data as input and does 3D average value calculation
@@ -2956,8 +3079,9 @@ def global_avg_pool3d(data,
     return _make.adaptive_avg_pool3d(data, output_size, layout)
 
 
-def correlation(data1, data2, kernel_size, max_displacement, stride1, stride2, padding,
-                is_multiply, layout):
+def correlation(
+    data1, data2, kernel_size, max_displacement, stride1, stride2, padding, is_multiply, layout
+):
     r"""Applies correlation to inputs.
 
     The correlation layer performs multiplicative patch comparisons between two feature maps.
@@ -3035,5 +3159,6 @@ def correlation(data1, data2, kernel_size, max_displacement, stride1, stride2, p
     """
     if isinstance(padding, int):
         padding = (padding, padding)
-    return _make.correlation(data1, data2, kernel_size, max_displacement, stride1, stride2,
-                             padding, is_multiply, layout)
+    return _make.correlation(
+        data1, data2, kernel_size, max_displacement, stride1, stride2, padding, is_multiply, layout
+    )

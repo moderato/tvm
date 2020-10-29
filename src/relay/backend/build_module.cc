@@ -124,7 +124,7 @@ class RelayBuildModule : public runtime::ModuleNode {
           [sptr_to_self, this](TVMArgs args, TVMRetValue* rv) { *rv = this->GetModule(); });
     } else if (name == "build") {
       return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) {
-        CHECK_EQ(args.num_args, 3);
+        ICHECK_EQ(args.num_args, 3);
         this->Build(args[0], args[1], args[2]);
       });
     } else if (name == "list_params") {
@@ -150,7 +150,7 @@ class RelayBuildModule : public runtime::ModuleNode {
       });
     } else if (name == "optimize") {
       return PackedFunc([sptr_to_self, this](TVMArgs args, TVMRetValue* rv) {
-        CHECK_EQ(args.num_args, 2);
+        ICHECK_EQ(args.num_args, 2);
         *rv = this->Optimize(args[0], args[1], this->params_);
       });
     } else if (name == "generate_code") {
@@ -246,8 +246,10 @@ class RelayBuildModule : public runtime::ModuleNode {
    */
   IRModule Optimize(IRModule relay_module, const TargetsMap& targets,
                     const std::unordered_map<std::string, runtime::NDArray>& params) {
+    ICHECK(relay_module.defined()) << "The IRModule must be defined for the Relay compiler.";
+
     if (params.size()) {
-      CHECK(relay_module->ContainGlobalVar("main")) << "Missing the main entry function";
+      ICHECK(relay_module->ContainGlobalVar("main")) << "Missing the main entry function";
       GlobalVar main_glb_var = relay_module->GetGlobalVar("main");
       Function main_func = Downcast<Function>(relay_module->Lookup(main_glb_var));
       auto new_main = BindParamsByName(main_func, params);
@@ -267,6 +269,9 @@ class RelayBuildModule : public runtime::ModuleNode {
     if (targets.size() == 1) {
       pass_seqs.push_back(transform::Legalize());
     }
+
+    // Convert Dynamic ops to static versions
+    pass_seqs.push_back(transform::DynamicToStatic());
 
     pass_seqs.push_back(transform::SimplifyInference());
     PackedFunc fskip = PackedFunc([](TVMArgs args, TVMRetValue* rv) {
@@ -295,6 +300,7 @@ class RelayBuildModule : public runtime::ModuleNode {
 
     // Alter layout transformation is only applied to homogeneous execution yet.
     if (targets.size() == 1) {
+      pass_seqs.push_back(transform::InferType());
       pass_seqs.push_back(transform::AlterOpLayout());
     }
 
@@ -318,7 +324,7 @@ class RelayBuildModule : public runtime::ModuleNode {
       Optional<Integer> opt_fallback_dev =
           pass_ctx->GetConfig("relay.fallback_device_type", Integer(static_cast<int>(kDLCPU)));
       auto fallback_dev = opt_fallback_dev.value();
-      CHECK_GT(fallback_dev->value, 0U);
+      ICHECK_GT(fallback_dev->value, 0U);
       relay_module = RunDeviceAnnotationPass(relay_module, fallback_dev->value);
     }
 
@@ -332,7 +338,9 @@ class RelayBuildModule : public runtime::ModuleNode {
     // inline functions. However, this should be very unlikely for accelerators
     // and vendor-provided libraries. So we don't handle for now.
     relay_module = transform::Inline()(relay_module);
-    CHECK(relay_module.defined());
+    relay_module = transform::InferType()(relay_module);
+
+    ICHECK(relay_module.defined());
 
     return relay_module;
   }
@@ -344,9 +352,9 @@ class RelayBuildModule : public runtime::ModuleNode {
    */
   Target CreateDefaultTarget(int device_type) {
     std::string name = runtime::DeviceName(device_type);
-    if (name == "cpu") return Target::Create("llvm");
-    if (name == "gpu") return Target::Create("cuda");
-    return Target::Create(name);
+    if (name == "cpu") return Target("llvm");
+    if (name == "gpu") return Target("cuda");
+    return Target(name);
   }
 
   /*!
@@ -380,7 +388,7 @@ class RelayBuildModule : public runtime::ModuleNode {
     UpdateHeterogeneousInputs(fallback_device);
     auto rewrite = transform::RewriteAnnotatedOps(fallback_device);
     auto updated_module = rewrite(relay_module);
-    CHECK(updated_module.defined());
+    ICHECK(updated_module.defined());
 
     tvm::Map<Expr, Integer> device_map;
     for (const auto& it : updated_module->functions) {
@@ -405,11 +413,11 @@ class RelayBuildModule : public runtime::ModuleNode {
           break;
         }
         for (auto kv : annotation_map) {
-          CHECK_EQ(kv.second->value, dev_type) << "Expressions in the function are "
-                                               << "annotated with various device types,"
-                                               << "but not device copy operators "
-                                               << "found. Please check the "
-                                               << "RewriteAnnotation pass.";
+          ICHECK_EQ(kv.second->value, dev_type) << "Expressions in the function are "
+                                                << "annotated with various device types,"
+                                                << "but not device copy operators "
+                                                << "found. Please check the "
+                                                << "RewriteAnnotation pass.";
         }
         targets_.Set(0, CreateDefaultTarget(dev_type));
       }
@@ -444,7 +452,7 @@ class RelayBuildModule : public runtime::ModuleNode {
       // llvm if "codegen.LLVMModuleCreate" is accessible.
       const runtime::PackedFunc* pf = runtime::Registry::Get("codegen.LLVMModuleCreate");
       if (!target_host.defined())
-        target_host = (pf != nullptr) ? target::llvm() : target::stackvm();
+        target_host = (pf != nullptr) ? Target("llvm") : Target("stackvm");
 
       if (target_host.defined() && target_host->kind->name == "llvm") {
         // If we can decide the target is LLVM, we then create an empty LLVM module.

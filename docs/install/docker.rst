@@ -67,7 +67,7 @@ with ``localhost`` when pasting it into browser.
 
 Docker Source
 -------------
-Check out `The docker source <https://github.com/apache/incubator-tvm/tree/master/docker>`_ if you are interested in
+Check out `The docker source <https://github.com/apache/incubator-tvm/tree/main/docker>`_ if you are interested in
 building your own docker images.
 
 
@@ -82,4 +82,4 @@ You can find some un-official thirdparty prebuilt images.
 These images are used for test purposes and are NOT of the ASF release.
 
 
-`<https://hub.docker.com/r/tlpack/>`_.
+`<https://hub.docker.com/r/tlcpack/>`_.

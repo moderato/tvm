@@ -20,6 +20,7 @@
 
 from . import _make
 from .dyn import _make as _dyn_make
+from .tensor import shape_of
 from ..expr import TupleWrapper, const, Expr, Tuple
 from ...tir import expr as _expr
 
@@ -41,6 +42,7 @@ def cast(data, dtype):
         The casted result.
     """
     from .. import _ffi_api as _relay_make
+
     return _relay_make.cast(data, dtype)
 
 
@@ -58,6 +60,7 @@ def cast_like(data, dtype_like):
         The casted result.
     """
     from .. import _ffi_api as _relay_make
+
     return _relay_make.cast_like(data, dtype_like)
 
 
@@ -78,6 +81,7 @@ def reinterpret(data, dtype):
         The reinterpreted result.
     """
     from .. import _make as _relay_make
+
     return _relay_make.reinterpret(data, dtype)
 
 
@@ -225,7 +229,7 @@ def reshape(data, newshape):
                 try:
                     tempshape.append(int(shape))
                 except ValueError as err:
-                    raise RuntimeError('Unrecognized shape type: %s' % err)
+                    raise RuntimeError("Unrecognized shape type: %s" % err)
         newshape = tempshape
     return _make.reshape(data, list(newshape))
 
@@ -645,25 +649,26 @@ def where(condition, x, y):
     condition.
 
     .. note::
-        The shape of condition, x, and y needs to be the same.
+        Shapes of condition, x, and y must be broadcastable to a common shape.
+        Semantics follow numpy where function
+        https://numpy.org/doc/stable/reference/generated/numpy.where.html
 
     Parameters
     ----------
     condition : relay.Expr
-        The condition array. The n-th element in `y` is selected when the n-th
-        value in the `condition` array is zero. Otherwise, the corresponding
-        element from `x` will be picked.
+        Where True, yield x, otherwise yield y
 
     x : relay.Expr
-        The first array to be selected.
+        The first array or scalar to be selected.
 
     y : relay.Expr
-        The second array to be selected.
+        The second array or scalar to be selected.
 
     Returns
     -------
     result : relay.Expr
-        The selected array.
+        The selected array. The output shape is the broadcasted shape from
+        condition, x, and y.
 
     Examples
     --------
@@ -674,7 +679,7 @@ def where(condition, x, y):
         condition = [[0, 1], [-1, 0]]
         relay.where(conditon, x, y) = [[5, 2], [3, 8]]
 
-        condition = [1, 0]
+        condition = [[1], [0]]
         relay.where(conditon, x, y) = [[1, 2], [7, 8]]
     """
     return _make.where(condition, x, y)
@@ -827,13 +832,18 @@ def strided_slice(data, begin, end, strides=None, slice_mode="end"):
     ret : relay.Expr
         The computed result.
     """
-    strides = strides or const([1], dtype="int32")
-    if isinstance(begin, (tuple, list)):
-        begin = const(list(begin))
-    if isinstance(end, (tuple, list)):
-        end = const(list(end))
-    if isinstance(strides, (tuple, list)):
-        strides = const(list(strides))
+    strides = strides or [1]
+    if isinstance(begin, Expr) or isinstance(end, Expr) or isinstance(strides, Expr):
+        if isinstance(begin, (tuple, list)):
+            begin = const(list(begin))
+        if isinstance(end, (tuple, list)):
+            end = const(list(end))
+        if isinstance(strides, (tuple, list)):
+            strides = const(list(strides))
+        normalized_begin = _make.where(
+            begin < cast_like(const(0), begin), begin + cast_like(shape_of(data), begin), begin
+        )
+        return _dyn_make.strided_slice(data, normalized_begin, end, strides, slice_mode)
     return _make.strided_slice(data, begin, end, strides, slice_mode)
 
 
@@ -1169,16 +1179,32 @@ def sparse_to_dense(sparse_indices, output_shape, sparse_values, default_value=0
     return _make.sparse_to_dense(sparse_indices, output_shape, sparse_values, default_value)
 
 
-def matrix_set_diag(data, diagonal):
+def matrix_set_diag(data, diagonal, k=0, align="RIGHT_LEFT"):
     """
-    Returns a tensor with the diagonal of input tensor replaced with the provided diagonal values.
+    Returns a tensor with the diagonals of input tensor replaced with the provided diagonal values.
 
     Parameters
     ----------
     data : relay.Expr
         Input Tensor.
+
     diagonal : relay.Expr
         Values to be filled in the diagonal.
+
+    k : int or tuple of int, optional
+        Diagonal Offset(s). The diagonal or range of diagonals to set. (0 by default)
+        Positive value means superdiagonal, 0 refers to the main diagonal, and
+        negative value means subdiagonals. k can be a single integer (for a single diagonal)
+        or a pair of integers specifying the low and high ends of a matrix band.
+        k[0] must not be larger than k[1].
+
+    align : string, optional
+        Some diagonals are shorter than max_diag_len and need to be padded.
+        align is a string specifying how superdiagonals and subdiagonals should be aligned,
+        respectively. There are four possible alignments: "RIGHT_LEFT" (default), "LEFT_RIGHT",
+        "LEFT_LEFT", and "RIGHT_RIGHT". "RIGHT_LEFT" aligns superdiagonals to the right
+        (left-pads the row) and subdiagonals to the left (right-pads the row). It is the packing
+        format LAPACK uses. cuSPARSE uses "LEFT_RIGHT", which is the opposite alignment.
 
     Returns
     -------
@@ -1207,4 +1233,37 @@ def matrix_set_diag(data, diagonal):
               [7, 5, 7, 7],
               [7, 7, 6, 7]]]
     """
-    return _make.matrix_set_diag(data, diagonal)
+    if isinstance(k, (tuple, list)):
+        k_one = k[0]
+        if len(k) >= 2:
+            k_two = k[1]
+        else:
+            k_two = k[0]
+    else:
+        k_one = k
+        k_two = k
+
+    super_diag_right_align = align[:5] == "RIGHT"
+    sub_diag_right_align = align[-5:] == "RIGHT"
+
+    return _make.matrix_set_diag(
+        data, diagonal, k_one, k_two, super_diag_right_align, sub_diag_right_align
+    )
+
+
+def adv_index(inputs):
+    """
+    Numpy style advanced indexing. Index with a list of tensors.
+
+    Parameters
+    ----------
+    inputs : Union(List[relay.Expr], Tuple[relay.Expr])
+        Input tensor and indices.
+        The first tensor is input data and rests are indices.
+
+    Returns
+    -------
+    result: relay.Expr
+        Output tensor.
+    """
+    return _make.adv_index(Tuple(inputs))

@@ -82,17 +82,6 @@ set(USE_OPENGL OFF)
 # Whether enable MicroTVM runtime
 set(USE_MICRO OFF)
 
-# Whether to enable SGX runtime
-#
-# Possible values for USE_SGX:
-# - /path/to/sgxsdk: path to Intel SGX SDK
-# - OFF: disable SGX
-#
-# SGX_MODE := HW|SIM
-set(USE_SGX OFF)
-set(SGX_MODE "SIM")
-set(RUST_SGX_SDK "/path/to/rust-sgx-sdk")
-
 # Whether enable RPC runtime
 set(USE_RPC ON)
 
@@ -123,7 +112,16 @@ set(USE_LLVM /usr/bin/llvm-config)
 #---------------------------------------------
 # Contrib libraries
 #---------------------------------------------
-# Whether use BLAS, choices: openblas, mkl, atlas, apple
+# Whether to build with BYODT software emulated posit custom datatype
+# 
+# Possible values:
+# - ON: enable BYODT posit, requires setting UNIVERSAL_PATH
+# - OFF: disable BYODT posit
+#
+# set(UNIVERSAL_PATH /path/to/stillwater-universal) for ON
+set(USE_BYODT_POSIT OFF)
+
+# Whether use BLAS, choices: openblas, atlas, apple
 set(USE_BLAS mkl)
 
 # /path/to/mkl: mkl root path when use mkl blas library
@@ -174,6 +172,16 @@ set(USE_ROCBLAS OFF)
 
 # Whether use contrib sort
 set(USE_SORT OFF)
+
+# Whether to build with TensorRT codegen or runtime
+# Examples are available here: docs/deploy/tensorrt.rst.
+#
+# USE_TENSORRT_CODEGEN - Support for compiling a relay graph where supported operators are
+#                        offloaded to TensorRT. OFF/ON
+# USE_TENSORRT_RUNTIME - Support for running TensorRT compiled modules, requires presense of
+#                        TensorRT library. OFF/ON/"path/to/TensorRT"
+set(USE_TENSORRT_CODEGEN OFF)
+set(USE_TENSORRT_RUNTIME OFF)
 
 # Build ANTLR parser for Relay text format
 # Possible values:
