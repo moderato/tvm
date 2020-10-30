@@ -92,7 +92,7 @@ def depthwise_conv2d_python_nchw(input_np, filter_np, stride, padding):
 
 
 def depthwise_conv2d_python_nhwc(input_np, filter_np, stride, padding):
-    """Depthwise convolution operator in nchw layout.
+    """Depthwise convolution operator in NHWC layout.
 
     Parameters
     ----------
@@ -100,7 +100,7 @@ def depthwise_conv2d_python_nhwc(input_np, filter_np, stride, padding):
         4-D with shape [batch, in_height, in_width, in_channel]
 
     filter_np : numpy.ndarray
-        4-D with shape [filter_height, filter_width, in_channel, channel_multiplier]
+        4-D with shape [filter_height, filter_width, channel_multiplier, in_channel]
 
     stride : list / tuple of 2 ints
         [stride_height, stride_width]
@@ -114,7 +114,7 @@ def depthwise_conv2d_python_nhwc(input_np, filter_np, stride, padding):
         4-D with shape [batch, out_height, out_width, out_channel]
     """
     batch, in_height, in_width, in_channel = input_np.shape
-    filter_height, filter_width, _, channel_multiplier = filter_np.shape
+    filter_height, filter_width, channel_multiplier, _ = filter_np.shape
     if isinstance(stride, int):
         stride_h = stride_w = stride
     else:
@@ -130,7 +130,7 @@ def depthwise_conv2d_python_nhwc(input_np, filter_np, stride, padding):
             for j in range(out_channel):
                 output_np[i, :, :, j] = signal.convolve2d(
                     input_np[i, :, :, j // channel_multiplier],
-                    np.rot90(filter_np[:, :, j // channel_multiplier, j % channel_multiplier], 2),
+                    np.rot90(filter_np.transpose(0, 1, 3, 2)[:, :, j // channel_multiplier, j % channel_multiplier], 2),
                     mode="valid",
                 )[
                     0 : (in_height - filter_height + 1) : stride_h,
@@ -155,7 +155,7 @@ def depthwise_conv2d_python_nhwc(input_np, filter_np, stride, padding):
             for j in range(out_channel):
                 output_np[i, :, :, j] = signal.convolve2d(
                     input_np[i, :, :, j // channel_multiplier],
-                    np.rot90(filter_np[:, :, j // channel_multiplier, j % channel_multiplier], 2),
+                    np.rot90(filter_np.transpose(0, 1, 3, 2)[:, :, j // channel_multiplier, j % channel_multiplier], 2),
                     mode="same",
                 )[index_h:in_height:stride_h, index_w:in_width:stride_w]
 
