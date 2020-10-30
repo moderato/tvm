@@ -183,7 +183,7 @@ bool Conv2DRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
 
     Array<IndexExpr> wshape_oihw = trans_kernel_layout.ForwardShape(weight->shape);
     if (tvm::tir::ExprDeepEqual()(param->groups, dshape_nchw[1]) &&
-        tvm::tir::ExprDeepEqual()(param->groups, wshape_oihw[1])) {
+        tvm::tir::ExprDeepEqual()(param->groups, wshape_oihw[0])) {
       is_depthwise = true;
     }
   }
@@ -197,7 +197,7 @@ bool Conv2DRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
 
     if (is_depthwise) {
       // infer weight's shape for depthwise convolution
-      wshape = {{indexdiv(param->channels, dshape_nchw[1]), dshape_nchw[1], param->kernel_size[0],
+      wshape = {{dshape_nchw[1], indexdiv(param->channels, dshape_nchw[1]), param->kernel_size[0],
                  param->kernel_size[1]}};
     } else {
       wshape = {{param->channels, indexdiv(dshape_nchw[1], param->groups), param->kernel_size[0],

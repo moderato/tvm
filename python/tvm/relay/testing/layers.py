@@ -194,8 +194,8 @@ def conv_kernel_layout(data_layout, is_depthwise=False):
         "NHWC": "HWIO",
     }
     depthwise_conv_layout_map = {
-        'NCHW': 'OIHW',
-        'NHWC': 'HWIO', # In my fork I use HWIO for depthwise as well
+        "NCHW": "OIHW",
+        "NHWC": "HWOI",
     }
     mapping = depthwise_conv_layout_map if is_depthwise else conv_layout_map
     assert data_layout in mapping, "Unknown data layout %s" % data_layout

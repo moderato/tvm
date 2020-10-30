@@ -70,10 +70,10 @@ def separable_conv_block(
         strides = (1, 1)
 
     # depthwise convolution + bn + relu
-    if layout == 'NCHW':
-        wshape = (1, depthwise_channels) + kernel_size # OIHW / MIHW
-    elif layout == 'NHWC':
-        wshape = kernel_size + (depthwise_channels, 1) # HWIO / HWIM
+    if layout == "NCHW":
+        wshape = (depthwise_channels, 1) + kernel_size
+    elif layout == "NHWC":
+        wshape = kernel_size + (depthwise_channels, 1)
     else:
         raise ValueError("Invalid layout: " + layout)
     bn_axis = layout.index("C")
@@ -123,10 +123,10 @@ def bottleneck_block(data, name, input_channels, t, output_channels, s,
     bn1 = layers.batch_norm_infer(data=conv1, epsilon=epsilon, axis=bn_axis, name=name+'_bn1')
     act1 = relay.nn.relu(data=bn1)
 
-    if layout == 'NCHW':
-        wshape = (1, t*input_channels) + (3, 3) # OIHW / MIHW
-    elif layout == 'NHWC':
-        wshape = (3, 3) + (t*input_channels, 1) # HWIO / HWIM
+    if layout == "NCHW":
+        wshape = (t*input_channels, 1) + (3, 3)
+    elif layout == "NHWC":
+        wshape = (3, 3) + (t*input_channels, 1)
     else:
         raise ValueError("Invalid layout: " + layout)
     weight = relay.var(name + "_weight", shape=wshape, dtype=dtype)
