@@ -126,25 +126,24 @@ TVM_REGISTER_NODE_TYPE(FusedConv2DAttrs);
 
 TVM_REGISTER_GLOBAL("relay.op.nn._make.fused_conv2d")
     .set_body_typed([](
-                        Expr data, 
+                        Expr data,
                         Expr weight1, Expr scale1, Expr shift1,
                         Expr weight2, Expr scale2, Expr shift2,
                         Array<Array<IndexExpr>> strides_array,
                         Array<Array<IndexExpr>> padding_array,
-                        Array<Array<IndexExpr>> dilation_array, 
-                        Array<IndexExpr> groups_array,
+                        Array<Array<IndexExpr>> dilation_array,
+                        Array<Integer> groups_array,
                         Array<IndexExpr> channels_array,
-                        Array<Array<IndexExpr>> kernel_size_array, 
+                        Array<Array<IndexExpr>> kernel_size_array,
                         Array<Bool> bn_relu_array,
-                        Array<String> data_layout_array, 
+                        Array<String> data_layout_array,
                         Array<String> kernel_layout_array,
                         Array<String> out_layout_array,
-                        DataType out_dtype
-    ) {
-      return MakeFusedConv2D<FusedConv2DAttrs>( data, 
+                        DataType out_dtype) {
+      return MakeFusedConv2D<FusedConv2DAttrs>( data,
                                                 weight1, scale1, shift1,
                                                 weight2, scale2, shift2,
-                                                strides_array, padding_array, dilation_array, 
+                                                strides_array, padding_array, dilation_array,
                                                 groups_array, channels_array, kernel_size_array, bn_relu_array,
                                                 data_layout_array, kernel_layout_array, out_layout_array, out_dtype,
                                                 "nn.fused_conv2d");
@@ -163,6 +162,7 @@ RELAY_REGISTER_OP("nn.fused_conv2d")
     .add_argument("weight2", "Tensor", "The second weight tensor.")
     .add_argument("scale2", "Tensor", "The second scale tensor.")
     .add_argument("shift2", "Tensor", "The second shift tensor.")
+    .add_type_rel("FusedConv2D", FusedConv2DRel<FusedConv2DAttrs>)
     .set_support_level(2);
 
 

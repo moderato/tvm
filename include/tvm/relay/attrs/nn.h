@@ -183,7 +183,7 @@ struct FusedConv2DAttrs : public tvm::AttrsNode<FusedConv2DAttrs> {
   Array<Array<IndexExpr>> strides_array;
   Array<Array<IndexExpr>> padding_array;
   Array<Array<IndexExpr>> dilation_array;
-  Array<IndexExpr> groups_array;
+  Array<Integer> groups_array;
   Array<IndexExpr> channels_array;
   Array<Array<IndexExpr>> kernel_size_array;
   Array<Bool> bn_relu_array;
@@ -196,22 +196,31 @@ struct FusedConv2DAttrs : public tvm::AttrsNode<FusedConv2DAttrs> {
     TVM_ATTR_FIELD(num_layers).describe(
         "Number of fused convolution layers.");
     TVM_ATTR_FIELD(strides_array)
+        .set_default(Array<Array<IndexExpr>>({{1, 1}, {1, 1}}))
         .describe("");
     TVM_ATTR_FIELD(padding_array)
+        .set_default(Array<Array<IndexExpr>>({{1, 1}, {0, 0}}))
         .describe("");
     TVM_ATTR_FIELD(dilation_array)
-        .describe("Specifies the dilation rate to use for dilated convolution.");
+        .set_default(Array<Array<IndexExpr>>({{1, 1}, {1, 1}}))
+        .describe("");
     TVM_ATTR_FIELD(groups_array)
+        .set_default(Array<Integer>({1, 1}))
         .describe("");
     TVM_ATTR_FIELD(channels_array)
+        .set_default(NullValue<Array<IndexExpr>>())
         .describe("");
     TVM_ATTR_FIELD(kernel_size_array)
+        .set_default(Array<Array<IndexExpr>>({{3, 3}, {1, 1}}))
         .describe("");
     TVM_ATTR_FIELD(data_layout_array)
+        .set_default(Array<String>({"NHWC", "NHWC"}))
         .describe("");
     TVM_ATTR_FIELD(kernel_layout_array)
+        .set_default(Array<String>({"HWIO", "NHWC"}))
         .describe("");
     TVM_ATTR_FIELD(out_layout_array)
+        .set_default(Array<String>({"", ""}))
         .describe("");
     TVM_ATTR_FIELD(bn_relu_array)
         .describe("BN ReLU of each fused layer.");
