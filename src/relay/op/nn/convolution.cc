@@ -119,8 +119,6 @@ with the layer input to produce a tensor of outputs.
     .add_type_rel("Conv2D", Conv2DRel<Conv2DAttrs>)
     .set_attr<FInferCorrectLayout>("FInferCorrectLayout", ConvInferCorrectLayout<Conv2DAttrs>);
 
-
-
 // relay.nn.fused_conv2d
 TVM_REGISTER_NODE_TYPE(FusedConv2DAttrs);
 
@@ -162,10 +160,9 @@ RELAY_REGISTER_OP("nn.fused_conv2d")
     .add_argument("weight2", "Tensor", "The second weight tensor.")
     .add_argument("scale2", "Tensor", "The second scale tensor.")
     .add_argument("shift2", "Tensor", "The second shift tensor.")
-    .add_type_rel("FusedConv2D", FusedConv2DRel<FusedConv2DAttrs>)
-    .set_support_level(2);
-
-
+    .set_support_level(2)
+    .add_type_rel("FusedConv2D", FusedConv2DRel<FusedConv2DAttrs>);
+    // .set_attr<FInferCorrectLayout>("FInferCorrectLayout", FusedConv2DInferCorrectLayout<FusedConv2DAttrs>);
 
 // relay.nn.conv3d
 TVM_REGISTER_NODE_TYPE(Conv3DAttrs);

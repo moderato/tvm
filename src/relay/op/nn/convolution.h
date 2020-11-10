@@ -373,7 +373,7 @@ bool FusedConv2DRel(const Array<Type>& types, int num_inputs, const Attrs& attrs
       ICHECK_EQ(dilation_array.size(), num_layers);
       auto kernel_size = kernel_size_array[i];
       auto dilation = dilation_array[i];
-      auto channels = channels_array[i];
+      channels = channels_array[i];
       ICHECK_EQ(kernel_size.size(), 2);
       ICHECK_EQ(dilation.size(), 2);
       Array<IndexExpr> wshape;
@@ -1361,6 +1361,20 @@ Array<Array<Layout> > ConvInferCorrectLayout(const Attrs& attrs,
   return Array<Array<Layout> >{
       {params->data_layout, params->kernel_layout},
       {params->out_layout == "" ? params->data_layout : params->out_layout}};
+}
+
+template <typename T>
+Array<Array<Layout> > FusedConv2DInferCorrectLayout(const Attrs& attrs,
+                                             const Array<Layout>& new_in_layouts,
+                                             const Array<Layout>& old_in_layouts,
+                                             const Array<tvm::relay::Type>& old_in_types) {
+  const T* params = attrs.as<T>();
+
+  // We always make other operators to fit the layouts of convolution layers
+  // So this inference ignores all inputs
+  return Array<Array<Layout> >{
+      {params->data_layout_array[0], params->kernel_layout_array[0], "", "", params->kernel_layout_array[1], "", ""},
+      {params->out_layout_array[1] == "" ? params->data_layout_array[0] : params->out_layout_array[1]}}; // Output layout could be different from input layout.
 }
 
 }  // namespace relay

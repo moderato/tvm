@@ -29,6 +29,11 @@ class Conv2DAttrs(Attrs):
     """Attributes for nn.conv2d"""
 
 
+@tvm._ffi.register_object("relay.attrs.FusedConv2DAttrs")
+class FusedConv2DAttrs(Attrs):
+    """Attributes for nn.fused_conv2d"""
+
+
 @tvm._ffi.register_object("relay.attrs.Conv2DWinogradAttrs")
 class Conv2DWinogradAttrs(Attrs):
     """Attributes for nn.contrib_conv2d_winograd_without_weight_transform"""
