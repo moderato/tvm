@@ -288,7 +288,6 @@ bool Conv2DRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
   return true;
 }
 
-
 template <typename AttrType>
 bool FusedConv2DRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
                const TypeReporter& reporter) {
@@ -1373,7 +1372,7 @@ Array<Array<Layout> > FusedConv2DInferCorrectLayout(const Attrs& attrs,
   // We always make other operators to fit the layouts of convolution layers
   // So this inference ignores all inputs
   return Array<Array<Layout> >{
-      {params->data_layout_array[0], params->kernel_layout_array[0], "", "", params->kernel_layout_array[1], "", ""},
+      {params->data_layout_array[0], params->kernel_layout_array[0], "C", "C", params->kernel_layout_array[1], "C", "C"},
       {params->out_layout_array[1] == "" ? params->data_layout_array[0] : params->out_layout_array[1]}}; // Output layout could be different from input layout.
 }
 
