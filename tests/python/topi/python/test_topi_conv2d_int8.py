@@ -24,8 +24,8 @@ from tvm.autotvm.task.space import FallbackConfigEntity
 from tvm import topi
 import tvm.topi.testing
 from tvm.contrib.pickle_memoize import memoize
-from tvm.topi.nn.util import get_pad_tuple
-from tvm.topi.util import get_const_tuple
+from tvm.topi.nn.utils import get_pad_tuple
+from tvm.topi.utils import get_const_tuple
 from tvm.topi.arm_cpu.conv2d_gemm import is_aarch64_arm
 
 from common import Int8Fallback
@@ -72,6 +72,12 @@ def compile_conv2d_NHWC_gemm_int8_arm(
             topi.arm_cpu.compute_conv2d_NHWC_quantized_native,
             topi.arm_cpu.schedule_conv2d_NHWC_quantized_native,
         ),
+        # TODO(giuseros) Need LLVM-11 in order to compile with +i8mm extension
+        # (
+        #   "llvm --device arm_cpu --mtriple aarch64-linux-gnu -mattr=+v8.2a,+i8mm",
+        #   topi.arm_cpu.compute_conv2d_NHWC_quantized_interleaved,
+        #   topi.arm_cpu.schedule_conv2d_NHWC_quantized_interleaved,
+        # ),
     ]
 
     for device_tuple in devices:

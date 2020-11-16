@@ -178,7 +178,7 @@ class RPCEndpoint::EventHandler : public dmlc::Stream {
                    << args[i].AsObjectRef<ObjectRef>()->GetTypeKey() << " is not supported by RPC";
       } else if (tcode == kTVMContext) {
         DLContext ctx = args[i];
-        ICHECK_LT(static_cast<int>(ctx.device_type), kRPCSessMask)
+        ICHECK(!IsRPCSessionContext(ctx))
             << "InternalError: cannot pass RPC context in the channel";
       }
     }
@@ -700,6 +700,14 @@ void RPCEndpoint::Init() {
   });
 }
 
+/*!
+ * \brief Create a new RPCEndpoint instance.
+ * \param channel RPCChannel used to communicate
+ * \param name Name of this session, used to identify log messages from this RPCEndpoint instance.
+ * \param The remote key reported during protocol initialization, or "%toinit" if the RPCEndpoint
+ *     should handle this phase of the protocol for you. Some servers may prefer to access parts of
+ *     the key to modify their behavior.
+ */
 std::shared_ptr<RPCEndpoint> RPCEndpoint::Create(std::unique_ptr<RPCChannel> channel,
                                                  std::string name, std::string remote_key) {
   std::shared_ptr<RPCEndpoint> endpt = std::make_shared<RPCEndpoint>();

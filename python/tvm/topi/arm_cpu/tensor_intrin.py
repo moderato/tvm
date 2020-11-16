@@ -19,7 +19,7 @@
 
 import tvm
 from tvm import te
-from tvm.contrib import util, clang
+from tvm.contrib import utils, clang
 
 
 def gemm_quantized_4_4_batched():
@@ -372,7 +372,7 @@ def gemm_quantized_impl(M, N, K, unroll, interleave, data_type="uint8"):
         cc_code = cc_code.replace("umull", "smull")
         cc_code = cc_code.replace("uadalp", "sadalp")
 
-    temp = util.tempdir()
+    temp = utils.tempdir()
     ll_path = temp.relpath("temp.ll")
     # Create LLVM ir from c source code
     ll_code = clang.create_llvm(
@@ -411,6 +411,7 @@ def gemm_quantized(M, N, K, unroll, interleave, in_type, out_type):
     intrin : TensorIntrin
         The ARM uint8/int8 TensorIntrin that can be used in tensorizing schedule
     """
+    assert in_type in ["uint8", "int8"]
     A = te.placeholder((K // 16, te.var("m"), 16), dtype=in_type, name="A")
     B = te.placeholder((K // 16, te.var("n"), 16), dtype=in_type, name="B")
 
@@ -627,7 +628,7 @@ def gemm_acc_4x4_int8_int8_int32(dtype):
     Int8 4x4 matrix multiplication and accumulation using sdot/udot
     instructions. This function takes two arrays of int8 datatype
     -- A[4][4] and B[4][4] and produces a 4x4 matrix
-    which is equal to A*B.
+    which is equal to A*B'.
 
     The pseudo code is as follows.
 
@@ -643,7 +644,6 @@ def gemm_acc_4x4_int8_int8_int32(dtype):
         }
 
     Notes:
-        * The rows of matrix B are transposed
         * The tiling strategy is picked to maximize register usage.
 
     Parameters
@@ -656,6 +656,7 @@ def gemm_acc_4x4_int8_int8_int32(dtype):
     intrin : TensorIntrin
         The Arm TensorIntrin that can be used in tensorizing schedule
     """
+    assert dtype in ["uint8", "int8"]
     # This needs to be a variable number of "rows" since TVM
     # "thinks" I only need to compute one row because of
     # padding
@@ -755,7 +756,7 @@ def gemm_acc_nx16_int8_int8_int32(dtype, rows):
     """
     Int8 nx16 matrix multiplication and accumulation using sdot/udot instructions
     This function takes two arrays of int8 datatype -- A[n][4] and
-    B[4][16] and produces a rowsx16 matrix which is equal to A*B
+    B[4][16] and produces a rowsx16 matrix which is equal to A*B'
     The pseudo code is as follows.
 
     .. code-block:: c
@@ -771,7 +772,6 @@ def gemm_acc_nx16_int8_int8_int32(dtype, rows):
         }
 
     Notes:
-        * The rows of matrix B are transposed
         * The tile size of B is 16x4. Since the reduction variable k moves between 0 and 16
           we need 4 tiles of B to compute a single row of the output. The first 4 values of
           k will be fetched from B[0][j][k], the second batch of 4 from B[1][j][k] and so on
@@ -789,6 +789,7 @@ def gemm_acc_nx16_int8_int8_int32(dtype, rows):
     intrin : TensorIntrin
         The Arm TensorIntrin that can be used in tensorizing schedule
     """
+    assert dtype in ["uint8", "int8"]
     A = te.placeholder((rows, 16), dtype, name="A")
     B = te.placeholder((4, 16, 4), dtype, name="B")
     dtype_vec = dtype + "x16"
@@ -865,6 +866,193 @@ def gemm_acc_nx16_int8_int8_int32(dtype, rows):
                             vec_aa,
                         )
                         ib.emit(outs[0].vstore([k, 4 * j], vdot))
+            return ib.get()
+
+        # body, reset, update
+        return _instr(0), _instr(1), _instr(2)
+
+    buffer_params = {"offset_factor": 1}
+    return te.decl_tensor_intrin(
+        C.op,
+        _intrin_func,
+        binds={A: aa_buffer, B: bb_buffer, C: cc_buffer},
+        default_buffer_params=buffer_params,
+    )
+
+
+def smlal_int16_int32():
+    """
+    Intrinsic to be used in order to load two int16x8 vectors and multiply
+    them together through a pair of smlal/smlal2 instructions. The pseudo-code
+    for the algorithm is as follows:
+
+        vec_a = vload(A, "int16x8")
+        vec_b = vload(B, "int16x8")
+
+        vec_c[0:4] += vec_a[0:4]*vec_b[0:4] //  -> smlal instruction
+        vec_c[4:8] += vec_a[4:8]*vec_b[4:8] // -> smlal2 instruction
+
+    So we load a single int16x8 vector and we accumulate its lower (0:4) and
+    higher part separately.
+    """
+    int16_lanes = 8
+    A = te.placeholder((int16_lanes,), dtype="int16", name="A")
+    B = te.placeholder((int16_lanes, 1), dtype="int16", name="B")
+    C = te.compute(
+        (int16_lanes,),
+        lambda i: A[i].astype("int32") * B[i, 0].astype("int32"),
+        name="C",
+    )
+
+    a_buffer = tvm.tir.decl_buffer(
+        A.shape, dtype="int16", name="a_buffer", offset_factor=1, strides=[1]
+    )
+    b_buffer = tvm.tir.decl_buffer(
+        B.shape,
+        dtype="int16",
+        name="b_buffer",
+        offset_factor=1,
+        strides=[te.var("sb"), 1],
+    )
+    c_buffer = tvm.tir.decl_buffer(
+        C.shape,
+        dtype="int32",
+        name="c_buffer",
+        offset_factor=1,
+        strides=[1],
+    )
+
+    def _intrin_func(ins, outs):
+        def _instr(index):
+            ib = tvm.tir.ir_builder.create()
+            if index == 1:
+                ib.emit(outs[0].vstore(0, tvm.tir.const(0, "int32x8")))
+                return ib.get()
+
+            vec_a = ins[0].vload([0], "int16x8")
+            vec_b = ins[1].vload([0, 0], "int16x8")
+            inst = "llvm.aarch64.neon.smull"
+
+            # Higher part of the vector
+            vec_c_h = outs[0].vload([4], "int32x4")
+            vec_a_h = tvm.tir.call_intrin("int16x4", "tir.vectorhigh", vec_a)
+            vec_b_h = tvm.tir.call_intrin("int16x4", "tir.vectorhigh", vec_b)
+            vmull_h = tvm.tir.call_llvm_pure_intrin(
+                "int32x4", inst, tvm.tir.const(2, "uint32"), vec_a_h, vec_b_h
+            )
+            vec_out_h = vec_c_h + vmull_h
+
+            # Lower part of the vector
+            vec_c_l = outs[0].vload([0], "int32x4")
+            vec_a_l = tvm.tir.call_intrin("int16x4", "tir.vectorlow", vec_a)
+            vec_b_l = tvm.tir.call_intrin("int16x4", "tir.vectorlow", vec_b)
+            vmull_l = tvm.tir.call_llvm_pure_intrin(
+                "int32x4", inst, tvm.tir.const(2, "uint32"), vec_a_l, vec_b_l
+            )
+            vec_out_l = vec_c_l + vmull_l
+
+            # Combine higher and lower part in a single int32x8 vector to store
+            # (this will require two different store instructions, since the
+            # length of a NEON vector is fixed at 128
+            vec_out = tvm.tir.call_intrin("int32x8", "tir.vectorcombine", vec_out_l, vec_out_h)
+            ib.emit(outs[0].vstore(0, vec_out))
+            return ib.get()
+
+        # body, reset, update
+        return _instr(0), _instr(1), _instr(2)
+
+    buffer_params = {"offset_factor": 1}
+    return te.decl_tensor_intrin(
+        C.op,
+        _intrin_func,
+        binds={A: a_buffer, B: b_buffer, C: c_buffer},
+        default_buffer_params=buffer_params,
+    )
+
+
+def gemm_acc_2x2_int8_int8_int32(dtype):
+    """
+    Int8 2x2 matrix multiplication using smmla/ummla instructions
+    This function takes two arrays of int8 datatype -- A[2][8] and
+    B[2][8] and produces a 2x2 matrix which is equal to A*B'
+    The pseudo code is as follows.
+
+    .. code-block:: c
+
+        void mmla_2x2_int8_int8_int32(int8 A[2][8], int8 B[2][8], int32 C[2][2]){
+            for (int i = 0; i < 2; i++){
+                for (int j = 0; i < 2; i++){
+                    for (int k = 0; k < 8; k++){
+                        C[i][j] += A[i][k] * B[j][k]
+                    }
+            }
+        }
+
+    Parameters
+    ----------
+    dtype: str, {"uint8", "int8"}
+        Whether it works on unsigned int or signed int
+
+    Returns
+    -------
+    intrin : TensorIntrin
+        The Arm TensorIntrin that can be used in tensorizing schedule
+    """
+    assert dtype in ["uint8", "int8"]
+    A = te.placeholder((2, 8), dtype, name="A")
+    B = te.placeholder((2, 8), dtype, name="B")
+    dtype_vec = dtype + "x16"
+
+    k = te.reduce_axis((0, 8), name="k")
+    C = te.compute(
+        (2, 2),
+        lambda i, j: te.sum(A[i, k].astype("int32") * B[j, k].astype("int32"), axis=k),
+        name="C",
+    )
+
+    aa_buffer = tvm.tir.decl_buffer(
+        A.shape, dtype, name="aa_buffer", offset_factor=1, strides=[te.var("sa"), 1]
+    )
+    bb_buffer = tvm.tir.decl_buffer(
+        B.shape, dtype, name="bb_buffer", offset_factor=1, strides=[te.var("sb"), 1]
+    )
+    cc_buffer = tvm.tir.decl_buffer(
+        C.shape, dtype="int32", name="cc_buffer", offset_factor=1, strides=[te.var("sc"), 1]
+    )
+
+    llvm_intrin = "llvm.aarch64.neon.smmla" if dtype == "int8" else "llvm.aarch64.neon.ummla"
+
+    def _intrin_func(ins, outs):
+        def _instr(index):
+            ib = tvm.tir.ir_builder.create()
+            if index == 1:
+                ib.emit(outs[0].vstore([0, 0], tvm.tir.const(0, "int32x4")))
+                return ib.get()
+            # Load in vec_a the two rows of A
+            # vec_a = [a, b, c, d, e, f, g, h;
+            #          i, j, k, l, m, n, o, p,]
+            vec_a = ins[0].vload([0, 0], dtype_vec)
+            # Load in vec_b the two rows of B
+            # vec_b = [0, 2, 4, 6, 8, 10, 12, 14;
+            #          1, 3, 5, 7, 9, 11, 13, 14,]
+            vec_b = ins[1].vload([0, 0], dtype_vec)
+
+            # Execute the matrix multiplication via (s/u)mmla:
+            # vec_c = [a*0 + b*2 + c*4 + d*6 +e*8 + f*10 + g*12 + h*14;
+            #          a*1 + b*3 + c*5 + d*7 +e*9 + f*11 + g*13 + h*15;
+            #          i*0 + j*2 + k*4 + l*6 +m*8 + n*10 + o*12 + p*14;
+            #          i*1 + j*3 + k*5 + l*7 +m*9 + n*11 + o*13 + p*15]
+            vec_c = outs[0].vload([0, 0], "int32x4")
+            vmmla = tvm.tir.call_llvm_intrin(
+                "int32x4",
+                llvm_intrin,
+                tvm.tir.const(3, "uint32"),
+                vec_c,
+                vec_a,
+                vec_b,
+            )
+            # Store the result
+            ib.emit(outs[0].vstore([0, 0], vmmla))
             return ib.get()
 
         # body, reset, update

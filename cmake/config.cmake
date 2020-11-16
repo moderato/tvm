@@ -183,6 +183,9 @@ set(USE_SORT OFF)
 set(USE_TENSORRT_CODEGEN OFF)
 set(USE_TENSORRT_RUNTIME OFF)
 
+# Whether use VITIS-AI codegen
+set(USE_VITIS_AI OFF)
+ 
 # Build ANTLR parser for Relay text format
 # Possible values:
 # - ON: enable ANTLR by searching default locations (cmake find_program for antlr4 and /usr/local for jar)
@@ -202,5 +205,18 @@ set(USE_VTA_TSIM OFF)
 # Whether to build VTA FPGA driver (device side only)
 set(USE_VTA_FPGA OFF)
 
-# Whether to build the example external runtime module
-set(USE_EXAMPLE_EXT_RUNTIME OFF)
+# Whether use Thrust
+set(USE_THRUST OFF)
+
+# Whether to build the TensorFlow TVMDSOOp module
+set(USE_TF_TVMDSOOP OFF)
+
+# Whether to use STL's std::unordered_map or TVM's POD compatible Map
+set(USE_FALLBACK_STL_MAP OFF)
+
+# Whether to use hexagon device
+set(USE_HEXAGON_DEVICE OFF)
+set(USE_HEXAGON_SDK /path/to/sdk)
+
+# Whether to use ONNX codegen
+set(USE_TARGET_ONNX OFF)

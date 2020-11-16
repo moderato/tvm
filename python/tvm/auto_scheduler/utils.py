@@ -23,6 +23,7 @@ import multiprocessing.pool
 import queue
 import signal
 import threading
+import traceback
 import os
 
 import numpy as np
@@ -30,7 +31,7 @@ import numpy as np
 try:
     import psutil
 except ImportError:
-    raise ImportError("psutil not found, try `pip install psutil` to fix this")
+    psutil = None
 
 from tvm import rpc
 from tvm.tir import expr
@@ -129,62 +130,58 @@ def deserialize_args(args):
     return ret
 
 
-class NoDaemonProcess(multiprocessing.Process):
-    @property
-    def daemon(self):
-        return False
-
-    @daemon.setter
-    def daemon(self, value):
-        pass
-
-
-class NoDaemonContext(type(multiprocessing.get_context())):
-    Process = NoDaemonProcess
-
-
-class NoDaemonPool(multiprocessing.pool.Pool):
-    """A no daemon pool version of multiprocessing.Pool.
-    This allows us to start new processes inside the worker function"""
-
-    def __init__(self, *args, **kwargs):
-        kwargs["context"] = NoDaemonContext()
-        super().__init__(*args, **kwargs)
-
-    def __reduce__(self):
-        pass
-
-
 def kill_child_processes(parent_pid, sig=signal.SIGTERM):
     """kill all child processes recursively"""
+    if not psutil:
+        raise ImportError("psutil not found, try `pip install psutil` to fix this")
+
     try:
         parent = psutil.Process(parent_pid)
     except psutil.NoSuchProcess:
         return
-    children = parent.children(recursive=True)
-    for process in children:
-        try:
+
+    try:
+        children = parent.children(recursive=True)
+        for process in children:
             process.send_signal(sig)
-        except psutil.NoSuchProcess:
-            return
+    except psutil.NoSuchProcess:
+        return
 
 
-def call_func_with_timeout(timeout, func, args=(), kwargs=None):
-    """Call a function with timeout"""
+# The maximum length of traceback information
+MAX_TRACEBACK_INFO_LEN = 512
 
-    def func_wrapper(que):
+
+def make_traceback_info():
+    """ Get the error message from traceback. """
+    info = str(traceback.format_exc())
+    if len(info) > MAX_TRACEBACK_INFO_LEN:
+        info = (
+            info[: MAX_TRACEBACK_INFO_LEN // 2] + "\n...\n" + info[-MAX_TRACEBACK_INFO_LEN // 2 :]
+        )
+    return info
+
+
+def _func_wrapper(que, func, args, kwargs):
+    """Call function and return the result over the queue."""
+    try:
         if kwargs:
             que.put(func(*args, **kwargs))
         else:
             que.put(func(*args))
+    # pylint: disable=broad-except
+    except Exception:
+        que.put(Exception(make_traceback_info()))
 
+
+def call_func_with_timeout(timeout, func, args=(), kwargs=None):
+    """Call a function with timeout"""
     que = multiprocessing.Queue(2)
-    process = multiprocessing.Process(target=func_wrapper, args=(que,))
+    process = multiprocessing.Process(target=_func_wrapper, args=(que, func, args, kwargs))
     process.start()
-    process.join(timeout)
 
     try:
-        res = que.get(block=False)
+        res = que.get(timeout=timeout)
     except queue.Empty:
         res = TimeoutError()
 

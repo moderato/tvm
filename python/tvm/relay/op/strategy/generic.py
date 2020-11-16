@@ -20,9 +20,9 @@ import logging
 
 import re
 from tvm import topi
-from tvm.topi.util import get_const_int, get_const_float, get_const_tuple, get_float_tuple
+from tvm.topi.utils import get_const_int, get_const_float, get_const_tuple, get_float_tuple
+from tvm.target import generic_func, override_native_generic_func
 from .. import op as _op
-from ....target import generic_func, override_native_generic_func
 
 logger = logging.getLogger("strategy")
 
@@ -1086,12 +1086,15 @@ def wrap_compute_scatter(topi_compute):
     return _compute_scatter
 
 
-# scatter_add
-@generic_func
-def schedule_scatter_add(attrs, outs, target):
-    """schedule scatter_add"""
-    with target:
-        return topi.generic.schedule_scatter_add(outs)
+@override_native_generic_func("scatter_add_strategy")
+def scatter_add_strategy(attrs, outs, out_type, target):
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_scatter(topi.scatter_add),
+        wrap_topi_schedule(topi.generic.schedule_scatter),
+        name="scatter_add.generic",
+    )
+    return strategy
 
 
 # bitserial_conv2d
