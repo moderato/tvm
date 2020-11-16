@@ -141,7 +141,7 @@ set(USE_XSMM /root/Documents/libxsmm)
 set(USE_OPENMP OFF)
 
 # Whether use contrib.random in runtime
-set(USE_RANDOM OFF)
+set(USE_RANDOM ON)
 
 # Whether use NNPack
 set(USE_NNPACK OFF)

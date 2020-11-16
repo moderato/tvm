@@ -48,6 +48,9 @@ def get_infer_layout(task_name):
         return topi.nn.conv2d_infer_layout
     if task_name.startswith("depthwise_conv2d"):
         return topi.nn.depthwise_conv2d_infer_layout
+    if task_name.startswith("fused_conv2d"):
+        from fusion_composer import fused_conv2d_infer_layout
+        return fused_conv2d_infer_layout
     raise ValueError("Cannot find infer layout for task %s" % task_name)
 
 

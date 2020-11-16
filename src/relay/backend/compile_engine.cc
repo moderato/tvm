@@ -199,52 +199,17 @@ class ScheduleGetter : public backend::MemoizedExprTranslator<Array<te::Tensor>>
     ICHECK(flower_call) << "relay.backend.lower_call is not registered.";
 
     Array<te::Tensor> inputs;
-    // Detect if the call node is two convs that can be fused
-    fusable = DetectFusablePattern(call_node);
-    if (fusable) {
-      auto last_node = call_node;
-      Array<te::Tensor> inputs_tmp;
-      while (1) {
-        int idx = 0;
-        // Store the input tensors of the current call node
-        for (Expr arg : last_node->args) {
-          idx += 1;
-          // Skip the first one as it's the output of the last stage
-          if (idx == 1) {
-            continue;
-          }
-          for (te::Tensor tensor : VisitExpr(arg)) {
-            inputs_tmp.push_back(tensor);
-          }
-        }
-        // Traverse to the last stage
-        auto tmp = last_node;
-        last_node = last_node->args[0].as<CallNode>();
-        if (last_node == NULL) {
-          // If it's the first call node, store the first input tensor too as it's the input data
-          for (te::Tensor tensor : VisitExpr(tmp->args[0])) {
-            inputs_tmp.push_back(tensor);
-          }
-          break;
-        }
+    int count_tuple = 0;
+    for (Expr arg : call_node->args) {
+      if (arg->checked_type().as<TupleTypeNode>()) {
+        ++count_tuple;
       }
-      // Reverse the inputs
-      for (int i = inputs_tmp.size() - 1; i >= 0; i--) {
-        inputs.push_back(inputs_tmp[i]);
+      for (te::Tensor tensor : VisitExpr(arg)) {
+        inputs.push_back(tensor);
       }
-    } else {
-      int count_tuple = 0;
-      for (Expr arg : call_node->args) {
-        if (arg->checked_type().as<TupleTypeNode>()) {
-          ++count_tuple;
-        }
-        for (te::Tensor tensor : VisitExpr(arg)) {
-          inputs.push_back(tensor);
-        }
-      }
-      if (count_tuple) {
-        CHECK_EQ(call_node->args.size(), 1U) << "Only allow function with a single tuple input";
-      }
+    }
+    if (count_tuple) {
+      CHECK_EQ(call_node->args.size(), 1U) << "Only allow function with a single tuple input";
     }
 
     ICHECK(call_node->op.as<OpNode>()) << "Primitive function only allows call into primitive ops";
@@ -263,12 +228,12 @@ class ScheduleGetter : public backend::MemoizedExprTranslator<Array<te::Tensor>>
     }
 
     int op_pattern = fpattern[op];
-    // // Enable complex group fusion by commenting this check
-    // if (op_pattern >= kCommReduce) {
-    //   ICHECK(!anchor_op_.defined() || anchor_op_pattern_ < kCommReduce)
-    //       << "Two complicated op in a primitive function "
-    //       << " anchor=" << anchor_op_ << " current=" << op;
-    // }
+    // Enable complex group fusion by commenting this check
+    if (op_pattern >= kCommReduce) {
+      ICHECK(!anchor_op_.defined() || anchor_op_pattern_ < kCommReduce)
+          << "Two complicated op in a primitive function "
+          << " anchor=" << anchor_op_ << " current=" << op;
+    }
     if (op_pattern >= anchor_op_pattern_) {
       anchor_op_ = op;
       anchor_attrs_ = call_node->attrs;
@@ -334,8 +299,6 @@ class ScheduleGetter : public backend::MemoizedExprTranslator<Array<te::Tensor>>
   // Cache device copy op for equivalence checking to reduce registry lookup
   // overhead for each invocation of call node when retrieving schedules.
   const Op& device_copy_op_;
-
-  bool fusable;
 };
 
 // Creates shape function from functor.

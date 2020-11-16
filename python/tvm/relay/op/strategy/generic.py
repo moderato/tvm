@@ -303,6 +303,40 @@ def depthwise_conv2d_NCHWc_strategy(attrs, inputs, out_type, target):
     return strategy
 
 
+# fused_conv2d
+@override_native_generic_func("fused_conv2d_strategy")
+def fused_conv2d_strategy(attrs, inputs, out_type, target):
+    """conv2d strategy (NHWC)"""
+    from fusion_composer import FusionComposer
+    from schedules.schedule_utils import gpu_schedules as sch
+    from helper import get_fusion_parameters_from_fused_conv2d_attrs
+
+    def wrap_compute_fused_conv2d(topi_compute):
+        """Wrap conv2d fusion topi compute"""
+        # The API for compute in a strategy op is always FIXED (attrs, inputs, ret_type), while the computes for different ops are usually DIFFERENT.
+        # Needs to pull in all inputs (including every tensors involved in fusion) of the call.
+        def _compute_conv2d_fusion(attrs, inputs, ret_type):
+            return [topi_compute(inputs)]
+        return _compute_conv2d_fusion
+
+    def wrap_schedule_fused_conv2d(topi_schedule):
+        """Wrap fusion schedule"""
+        # The API for schedule in a strategy op is always FIXED (attrs, outs, target), while the schedules for different ops are usually DIFFERENT.
+        def wrapper(attrs, outs, target):
+            with target:
+                return topi_schedule(outs)
+        return wrapper
+
+    parameters = get_fusion_parameters_from_fused_conv2d_attrs(attrs, inputs)
+    fc = FusionComposer(parameters, auto_tvm=True, target=target)
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_fused_conv2d(fc.get_compute()),
+        wrap_schedule_fused_conv2d(fc.get_schedule(target=target)),
+        name="fused_conv2d")
+    return strategy
+
+
 # conv2d_winograd_without_weight_transform
 @override_native_generic_func("conv2d_winograd_without_weight_transform_strategy")
 def conv2d_winograd_without_weight_transfrom_strategy(attrs, inputs, out_type, target):

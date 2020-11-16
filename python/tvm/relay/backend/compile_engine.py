@@ -30,12 +30,8 @@ from .. import function as _function
 from .. import ty as _ty
 from . import _backend
 
-logger = logging.getLogger('compile_engine')
-autotvm_logger = logging.getLogger('autotvm')
-FUSION_PATTERNS = [
-    ["nn.conv2d", "multiply", "add", "nn.relu", "nn.conv2d", "multiply", "add", "nn.relu"],
-    ["nn.conv2d", "nn.conv2d"],
-]
+logger = logging.getLogger("compile_engine")
+autotvm_logger = logging.getLogger("autotvm")
 
 @tvm._ffi.register_object("relay.LoweredOutput")
 class LoweredOutput(Object):
@@ -250,134 +246,6 @@ def select_implementation(op, attrs, inputs, out_type, target, use_autotvm=True)
     return best_plevel_impl, outputs[best_plevel_impl]
 
 
-def detect_fusion_pattern(call):
-    """Detect if the call matches any of the supported fusion patterns"""
-    tmp = call
-    op_names = []
-    while True:
-        op_names.append(tmp.op.name)
-        tmp = tmp.args[0]
-        if not isinstance(tmp, tvm.relay.expr.Call):
-            break
-    op_names.reverse()
-    if op_names in FUSION_PATTERNS:
-        return "depth_conv"
-    return None
-
-
-def extract_attrs(call):
-    tmp = call
-    attrs_list = []
-    input_shape = None
-    while True:
-        print(tmp.op.name)
-        if tmp.op.name == "nn.relu":
-            attrs_list.append("relu")
-        if tmp.op.name == "nn.conv2d":
-            attrs_list.append(tmp.attrs)
-            if 'type_annotation' in dir(tmp.args[0]):
-                input_shape = tmp.args[0].type_annotation.shape # All I want is the input tensor shape!!
-        tmp = tmp.args[0]
-        if not isinstance(tmp, tvm.relay.expr.Call):
-            break
-    assert input_shape is not None
-    attrs_list.reverse()
-    return input_shape, attrs_list
-
-
-def attrs_list_to_parameters(input_shape, attrs_list):
-    from tvm.topi.util import get_const_tuple
-    param = []
-    for x in input_shape:
-        param.append(x)
-
-    idx = 0
-    while 1:
-        attrs = attrs_list[idx]
-        print(attrs)
-        if attrs == "multiply" or attrs == "add":
-            idx += 1
-            continue
-        else: # Assuming conv2dattrs here. TODO: Fix that.
-            H, _ = get_const_tuple(attrs.kernel_size)
-            stride_h, _ = get_const_tuple(attrs.strides)
-            is_depthwise = not (attrs.groups == 1)
-            bn_relu = "relu" if idx < len(attrs_list) - 1 and attrs_list[idx+1] == "relu" else None
-            print(bn_relu)
-
-            param.append(H) # Filter hw
-            param.append(1 if is_depthwise else attrs.channels) # Filter oc
-            param.append(stride_h) # Filter stride
-            param.append(is_depthwise)
-            param.append(bn_relu)
-
-            if bn_relu:
-                idx += 2
-            else:
-                idx += 1
-        if idx >= len(attrs_list):
-            break
-    # For block by default. TODO: Fix this.
-    param.append(False)
-
-    return param
-
-
-# TODO: Move this to the right place and try to register it
-def conv2d_fusion_strategy_cuda(p, all_inputs, pattern, target):
-    """conv2d cuda strategy (NHWC)"""
-    from .. import op as _op
-    from fusion_composer import FusionComposer
-    from schedules.schedule_utils import gpu_schedules as sch
-
-    def wrap_compute_conv2d_fusion(topi_compute):
-        """Wrap conv2d fusion topi compute"""
-        # The API for compute in a strategy op is always FIXED (attrs, inputs, ret_type), while the computes for different ops are usually DIFFERENT.
-        # Needs to pull in all inputs (including every tensors involved in fusion) of the call.
-        def _compute_conv2d_fusion(attrs, inputs, ret_type):
-            return [topi_compute(inputs)]
-        return _compute_conv2d_fusion
-
-    def wrap_schedule_conv2d_fusion(topi_schedule):
-        """Wrap fusion schedule"""
-        # The API for schedule in a strategy op is always FIXED (attrs, outs, target), while the schedules for different ops are usually DIFFERENT.
-        def wrapper(attrs, outs, target):
-            with target:
-                return topi_schedule(outs)
-        return wrapper
-
-    fc = FusionComposer(p, True, target)
-    strategy = _op.OpStrategy()
-    strategy.add_implementation(
-        wrap_compute_conv2d_fusion(fc.get_compute()),
-        wrap_schedule_conv2d_fusion(fc.get_schedule(pattern, tuning=False)), # tuning=False: query workload from ctx
-        name="conv2d_fusion.cuda")
-    return strategy
-
-
-def select_fusion_implementation(call, inputs, pattern, ret_type, target):
-    # TODO: Fix this
-    # from fusion_composer import FusionComposer
-    #
-    print("select fusion implementation")
-    input_shape, attrs_list = extract_attrs(call)
-    parameters = attrs_list_to_parameters(input_shape, attrs_list)
-    fstrategy = conv2d_fusion_strategy_cuda # TODO: Modify this if the strategy function is moved to somewhere else
-    with target:
-        strategy = fstrategy(parameters, inputs, pattern, target)
-    impl = strategy.specializations[0].implementations[0] # Assuming only one single implementation
-    autotvm.GLOBAL_SCOPE.silent = True
-
-    # print(impl.compute)
-    # print(impl.schedule)
-    # print(impl.same_as)
-    # print(impl.name)
-
-    print("------=====")
-    outs = impl.compute(None, inputs, ret_type)
-    return impl, outs
-
-
 @tvm._ffi.register_func("relay.backend.lower_call")
 def lower_call(call, inputs, target):
     """Lower the call expression to op implementation and tensor outputs."""
@@ -411,27 +279,14 @@ def lower_call(call, inputs, target):
             env.tracing = False
             reenable_tracing = True
 
-    # If fusion pattern detected
-    pattern = detect_fusion_pattern(call)
-    if pattern:
-        print("    Fusion detected")
-        best_impl, outputs = select_fusion_implementation(call, inputs, pattern, ret_type, target)
-        # pprint(call)
-        # print(inputs)
-        # print(ret_type)
-        # print(target)
-        print("    Fusion implementation selected")
+    if not is_dyn:
+        best_impl, outputs = select_implementation(op, call.attrs, inputs, ret_type, target)
     else:
-        if not is_dyn:
-            print("    select implementation")
-            best_impl, outputs = select_implementation(
-                op, call.attrs, inputs, ret_type, target)
-            print("    select implementation finished")
-        else:
-            # TODO(@icemelon9): Allow tvm to generate multiple kernels for dynamic shapes.
-            #   Currently, we just use the implementation with highest plevel
-            best_impl, outputs = select_implementation(
-                op, call.attrs, inputs, ret_type, target, use_autotvm=False)
+        # TODO(@icemelon9): Allow tvm to generate multiple kernels for dynamic shapes.
+        #   Currently, we just use the implementation with highest plevel
+        best_impl, outputs = select_implementation(
+            op, call.attrs, inputs, ret_type, target, use_autotvm=False
+        )
 
     # re-enable AutoTVM tracing
     if reenable_tracing:
