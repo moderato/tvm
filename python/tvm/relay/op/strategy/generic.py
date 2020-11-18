@@ -308,7 +308,6 @@ def depthwise_conv2d_NCHWc_strategy(attrs, inputs, out_type, target):
 def fused_conv2d_strategy(attrs, inputs, out_type, target):
     """conv2d strategy (NHWC)"""
     from fusion_composer import FusionComposer
-    from schedules.schedule_utils import gpu_schedules as sch
     from helper import get_fusion_parameters_from_fused_conv2d_attrs
 
     def wrap_compute_fused_conv2d(topi_compute):

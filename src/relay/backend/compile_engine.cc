@@ -209,7 +209,7 @@ class ScheduleGetter : public backend::MemoizedExprTranslator<Array<te::Tensor>>
       }
     }
     if (count_tuple) {
-      CHECK_EQ(call_node->args.size(), 1U) << "Only allow function with a single tuple input";
+      ICHECK_EQ(call_node->args.size(), 1U) << "Only allow function with a single tuple input";
     }
 
     ICHECK(call_node->op.as<OpNode>()) << "Primitive function only allows call into primitive ops";
@@ -228,7 +228,6 @@ class ScheduleGetter : public backend::MemoizedExprTranslator<Array<te::Tensor>>
     }
 
     int op_pattern = fpattern[op];
-    // Enable complex group fusion by commenting this check
     if (op_pattern >= kCommReduce) {
       ICHECK(!anchor_op_.defined() || anchor_op_pattern_ < kCommReduce)
           << "Two complicated op in a primitive function "

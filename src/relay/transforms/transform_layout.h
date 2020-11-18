@@ -228,6 +228,8 @@ Expr LayoutRewriter(const Call& ref_call, const Array<Expr>& new_args, const Obj
   std::vector<LayoutAlternatedExpr<TransformMemorizerT>> inputs;
   std::vector<Expr> normal_new_args;
 
+  // std::cout << "LayoutRewriter!" << std::endl;
+
   // NOTE: discard the "const" qualifier
   // TransformMemorizer memorizer = Downcast<TransformMemorizer>(ctx);
   // TransformMemorizerT* ctx_transformer =
@@ -286,6 +288,16 @@ Expr LayoutRewriter(const Call& ref_call, const Array<Expr>& new_args, const Obj
     new_in.push_back(inp->new_layout);
   }
 
+  // std::cout << "old_in" << std::endl;
+  // for (auto l : old_in) {
+  //   std::cout << l << std::endl;
+  // }
+
+  // std::cout << "new_in" << std::endl;
+  // for (auto l : new_in) {
+  //   std::cout << l << std::endl;
+  // }
+
   // Collect input types to pass on to Infer Correct Layout.
   tvm::Array<tvm::relay::Type> types;
   for (auto arg : ref_call->args) {
@@ -309,7 +321,14 @@ Expr LayoutRewriter(const Call& ref_call, const Array<Expr>& new_args, const Obj
   }
 
   // new_op = alter(op)
+  // std::cout << "==== CallWithNewLayouts begins" << std::endl;
   Call new_call = memorizer.CallWithNewLayouts(ref_call, normal_new_args);
+  // std::cout << "==== CallWithNewLayouts ends" << std::endl;
+
+  // std::cout << "new_in2 prev" << std::endl;
+  // for (auto n : new_in2) {
+  //   std::cout << n << std::endl;
+  // }
 
   // new_in2, new_out = op.infer(new_in)
   if (new_call->op->IsInstance<OpNode>()) {
@@ -321,6 +340,15 @@ Expr LayoutRewriter(const Call& ref_call, const Array<Expr>& new_args, const Obj
   } else {
     return Expr(nullptr);
   }
+
+  // std::cout << "new_in2 after" << std::endl;
+  // for (auto n : new_in2) {
+  //   std::cout << n << std::endl;
+  // }
+  // std::cout << "new_in after" << std::endl;
+  // for (auto n : new_in) {
+  //   std::cout << n << std::endl;
+  // }
 
   ICHECK_EQ(new_out.size(), old_out.size())
       << "The number of output nodes should keep the same during alter_op_layout";

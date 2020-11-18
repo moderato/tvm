@@ -215,6 +215,7 @@ static inline std::tuple<Array<Layout>, Array<Layout>, bool> InferCorrectLayouts
 
   Op op = Downcast<Op>(call->op);
   if (finfer_layout.count(op)) {
+    // std::cout << "Start inferring layout!!" << std::endl;
     Array<Array<Layout>> inferred_layouts;
     inferred_layouts = finfer_layout[op](call->attrs, new_in_layouts, old_in_layouts, old_in_types);
     ICHECK_EQ(inferred_layouts.size(), 2)
@@ -226,6 +227,8 @@ static inline std::tuple<Array<Layout>, Array<Layout>, bool> InferCorrectLayouts
         }
       }
     }
+    // std::cout << inferred_layouts[0] << std::endl;
+    // std::cout << inferred_layouts[1] << std::endl;
     return std::make_tuple<>(inferred_layouts[0], inferred_layouts[1], true);
   } else {
     return std::make_tuple<>(Array<Layout>(nullptr), Array<Layout>(nullptr), false);

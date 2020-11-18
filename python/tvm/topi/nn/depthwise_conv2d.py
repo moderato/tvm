@@ -161,6 +161,7 @@ def depthwise_conv2d_nchw(Input, Filter, stride, padding, dilation, out_dtype=No
     )
     return Output
 
+
 def depthwise_conv2d_nhwc(Input, Filter, stride, padding, dilation, out_dtype=None):
     """Depthwise convolution nhwc forward operator.
 

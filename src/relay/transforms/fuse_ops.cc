@@ -600,10 +600,9 @@ class GraphPartitioner {
   }
   // Combine two patterns together.
   static OpPatternKind CombinePattern(OpPatternKind lhs, OpPatternKind rhs) {
-    // // Enable complex group fusion by commenting this check
-    // if (lhs > kBroadcast && rhs > kBroadcast) {
-    //   LOG(FATAL) << "Cannot merge two complex group together";
-    // }
+    if (lhs > kBroadcast && rhs > kBroadcast) {
+      LOG(FATAL) << "Cannot merge two complex group together";
+    }
     if (lhs > rhs) return lhs;
     return rhs;
   }
@@ -621,7 +620,6 @@ class GraphPartitioner {
     child->parent = parent;
     // update anchor ref and pattern
     if (child->anchor_ref != nullptr) {
-      // Enable complex group fusion by commenting this check
       ICHECK(parent->anchor_ref == nullptr);
       parent->anchor_ref = child->anchor_ref;
       parent->pattern = CombinePattern(child->pattern, parent->pattern);
