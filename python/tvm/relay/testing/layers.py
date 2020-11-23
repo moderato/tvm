@@ -147,10 +147,13 @@ def dense_add_bias(data, weight=None, bias=None, units=None, **kwargs):
         The input expression.
 
     weight : relay.Expr
-        The weight to conv2d.
+        The weight to dense.
 
     bias : relay.Expr
         The bias.
+
+    units : int, optional
+        Number of hidden units of the dense transformation.
 
     kwargs : dict
         Additional arguments.

@@ -32,6 +32,7 @@ from . import resnet
 from . import resnet_3d
 from . import dqn
 from . import dcgan
+from . import mnasnet
 from . import mobilenet
 from . import lstm
 from . import inception_v3

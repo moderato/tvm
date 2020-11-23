@@ -14,9 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""
-Port of NNVM version of MobileNet to Relay.
-"""
+
 # pylint: disable=invalid-name
 
 from tvm import relay
@@ -109,7 +107,7 @@ def separable_conv_block(
 
 
 def bottleneck_block(data, name, input_channels, t, output_channels, s,
-                        epsilon=1e-5, layout='NCHW', dtype="float32"):
+                        kernel_size=(3, 3), insert_se=False, epsilon=1e-5, layout='NCHW', dtype="float32"):
     bn_axis = layout.index('C')
     residual = (input_channels == output_channels) and (s == 1)
 
@@ -126,25 +124,35 @@ def bottleneck_block(data, name, input_channels, t, output_channels, s,
     act1 = relay.nn.relu(data=bn1)
 
     if layout == "NCHW":
-        wshape = (t*input_channels, 1) + (3, 3)
+        wshape = (t*input_channels, 1) + kernel_size
     elif layout == "NHWC":
-        wshape = (3, 3) + (t*input_channels, 1)
+        wshape = kernel_size + (t*input_channels, 1)
     else:
         raise ValueError("Invalid layout: " + layout)
     weight = relay.var(name + "_weight", shape=wshape, dtype=dtype)
+
+    if kernel_size == (3, 3):
+        p = 1
+    elif kernel_size == (5, 5):
+        p = 2
+    else:
+        p = 0
     conv2 = layers.conv2d(
         data=act1,
         weight=weight,
         channels=t*input_channels,
         groups=t*input_channels,
-        kernel_size=(3, 3),
+        kernel_size=kernel_size,
         strides=(s, s),
-        padding=(1, 1),
+        padding=(p, p),
         data_layout=layout,
         kernel_layout=layers.conv_kernel_layout(layout, is_depthwise=True),
         name=name + '_depthwise_conv1')
     bn2 = layers.batch_norm_infer(data=conv2, epsilon=epsilon, axis=bn_axis, name=name+'_bn2')
     act2 = relay.nn.relu(data=bn2)
+
+    if insert_se:
+        act2 = se_block(act2, name=name + '_squeeze_excitation1', input_channels=t*input_channels, layout=layout, dtype=dtype)
 
     conv3 = layers.conv2d(
         data=act2,
@@ -165,137 +173,36 @@ def bottleneck_block(data, name, input_channels, t, output_channels, s,
     return output
 
 
-def mobile_net(
+def se_block(data, name, input_channels, ratio=0.25, layout='NCHW', dtype='float32'):
+    pooled = relay.nn.global_avg_pool2d(data, layout=layout)
+    dense1 = layers.dense_add_bias(pooled, units=int(input_channels*ratio), name=name + '_dense1')
+    relu = relay.nn.relu(data=dense1)
+    dense2 = layers.dense_add_bias(relu, units=input_channels, name=name + '_dense2')
+    sigmoid = relay.sigmoid(dense2)
+    mul = relay.multiply(data, sigmoid)
+    return mul
+
+
+def mnasnet(
+    cfgs,
     num_classes=1000,
     data_shape=(1, 3, 224, 224),
     dtype="float32",
-    alpha=1.0,
-    is_shallow=False,
     layout="NCHW",
 ):
     """Function to construct a MobileNet"""
     data = relay.var("data", shape=data_shape, dtype=dtype)
-    body = conv_block(data, "conv_block_1", int(32 * alpha), strides=(2, 2), layout=layout)
+    body = conv_block(data, "conv_block_1", 32, strides=(2, 2), layout=layout)
     body = separable_conv_block(
-        body, "separable_conv_block_1", int(32 * alpha), int(64 * alpha), layout=layout, dtype=dtype
+        body, "separable_conv_block_1", 32, 16, layout=layout, dtype=dtype
     )
-    body = separable_conv_block(
-        body,
-        "separable_conv_block_2",
-        int(64 * alpha),
-        int(128 * alpha),
-        downsample=True,
-        layout=layout,
-        dtype=dtype,
-    )
-    body = separable_conv_block(
-        body,
-        "separable_conv_block_3",
-        int(128 * alpha),
-        int(128 * alpha),
-        layout=layout,
-        dtype=dtype,
-    )
-    body = separable_conv_block(
-        body,
-        "separable_conv_block_4",
-        int(128 * alpha),
-        int(256 * alpha),
-        downsample=True,
-        layout=layout,
-        dtype=dtype,
-    )
-    body = separable_conv_block(
-        body,
-        "separable_conv_block_5",
-        int(256 * alpha),
-        int(256 * alpha),
-        layout=layout,
-        dtype=dtype,
-    )
-    body = separable_conv_block(
-        body,
-        "separable_conv_block_6",
-        int(256 * alpha),
-        int(512 * alpha),
-        downsample=True,
-        layout=layout,
-        dtype=dtype,
-    )
-    if is_shallow:
-        body = separable_conv_block(
-            body,
-            "separable_conv_block_7",
-            int(512 * alpha),
-            int(1024 * alpha),
-            downsample=True,
-            layout=layout,
-            dtype=dtype,
-        )
-        body = separable_conv_block(
-            body,
-            "separable_conv_block_8",
-            int(1024 * alpha),
-            int(1024 * alpha),
-            downsample=True,
-            layout=layout,
-            dtype=dtype,
-        )
-    else:
-        for i in range(7, 12):
-            body = separable_conv_block(
-                body,
-                "separable_conv_block_%d" % i,
-                int(512 * alpha),
-                int(512 * alpha),
-                layout=layout,
-                dtype=dtype,
-            )
-        body = separable_conv_block(
-            body,
-            "separable_conv_block_12",
-            int(512 * alpha),
-            int(1024 * alpha),
-            downsample=True,
-            layout=layout,
-            dtype=dtype,
-        )
-        body = separable_conv_block(
-            body,
-            "separable_conv_block_13",
-            int(1024 * alpha),
-            int(1024 * alpha),
-            layout=layout,
-            dtype=dtype,
-        )
-    pool = relay.nn.global_avg_pool2d(data=body, layout=layout)
-    flatten = relay.nn.batch_flatten(data=pool)
-    weight = relay.var("fc_weight")
-    bias = relay.var("fc_bias")
-    fc = relay.nn.dense(data=flatten, weight=weight, units=num_classes)
-    fc = relay.nn.bias_add(fc, bias)
-    softmax = relay.nn.softmax(data=fc)
-    return relay.Function(relay.analysis.free_vars(softmax), softmax)
 
-
-def mobile_net_v2(num_classes=1000, data_shape=(1, 3, 224, 224),
-                    dtype='float32', alpha=1.0, layout='NCHW'):
-    data = relay.var("data", shape=data_shape, dtype=dtype)
-    body = conv_block(data, 'conv_block_1', 32, strides=(2, 2),
-                      layout=layout)
-
-    cfgs = [(1, 16, 1, 1),
-            (6, 24, 2, 2),
-            (6, 32, 3, 2),
-            (6, 64, 4, 2),
-            (6, 96, 3, 1),
-            (6, 160, 3, 2),
-            (6, 320, 1, 1)]
-
-    ic = 32
-    for idx, (t, oc, n, s) in enumerate(cfgs):
+    ic = 16
+    for idx, (t, oc, n, s, k, se) in enumerate(cfgs):
         for i in range(n):
-            body = bottleneck_block(body, 'bottleneck_block_{}_{}'.format(idx+1, i+1), ic, t, oc, s, layout=layout, dtype=dtype)
+            body = bottleneck_block(body, 'bottleneck_block_{}_{}'.format(idx+1, i+1),
+                                    ic, t, oc, s=(s if i == 0 else 1),
+                                    kernel_size=(k, k), insert_se=se, layout=layout, dtype=dtype)
             ic = oc
 
     body = conv_block(body, 'conv_block_2', 
@@ -314,9 +221,9 @@ def mobile_net_v2(num_classes=1000, data_shape=(1, 3, 224, 224),
     return relay.Function(relay.analysis.free_vars(output), output)
 
 
-def get_workload(batch_size=1, num_classes=1000, image_shape=(3, 224, 224), version='v1',
+def get_workload(batch_size=1, num_classes=1000, image_shape=(3, 224, 224), version='a1',
                  dtype='float32', layout='NCHW'):
-    """Get benchmark workload for mobilenet
+    """Get benchmark workload for mnasnet
 
     Parameters
     ----------
@@ -330,7 +237,7 @@ def get_workload(batch_size=1, num_classes=1000, image_shape=(3, 224, 224), vers
         The input image shape, cooperate with layout
 
     version: str, optional
-        The version of mnasnet, by default v1.
+        The version of mnasnet, by default a1.
 
     dtype : str, optional
         The data type
@@ -348,12 +255,20 @@ def get_workload(batch_size=1, num_classes=1000, image_shape=(3, 224, 224), vers
         The parameters.
     """
     data_shape = tuple([batch_size] + list(image_shape))
-    if version == 'v1':
-        net = mobile_net(num_classes=num_classes, data_shape=data_shape,
-                        dtype=dtype, alpha=1.0, is_shallow=False,
-                        layout=layout)
-    elif version == 'v2':
-        net = mobile_net_v2(num_classes=num_classes, data_shape=data_shape,
-                    dtype=dtype, alpha=1.0, layout=layout)
+    if version == 'a1':
+        cfgs = [(6, 24, 2, 2, 3, False),
+                (3, 40, 3, 2, 5, True),
+                (6, 80, 4, 2, 3, False),
+                (6, 112, 2, 1, 3, True),
+                (6, 160, 3, 2, 5, True),
+                (6, 320, 1, 1, 3, False)]
+    elif version == 'b1':
+        cfgs = [(3, 24, 3, 2, 3, False),
+                (3, 40, 3, 2, 5, False),
+                (6, 80, 3, 2, 5, False),
+                (6, 96, 2, 1, 3, False),
+                (6, 192, 4, 2, 5, False),
+                (6, 320, 1, 1, 3, False)]
+    net = mnasnet(cfgs, num_classes=num_classes, data_shape=data_shape, dtype=dtype, layout=layout)
 
     return create_workload(net)
