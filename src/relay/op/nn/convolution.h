@@ -299,7 +299,7 @@ bool FusedConv2DRel(const Array<Type>& types, int num_inputs, const Attrs& attrs
   const AttrType* param = attrs.as<AttrType>();
   ICHECK(param != nullptr);
   const auto num_layers = int64_t(param->num_layers);
-  ICHECK_EQ(types.size(), num_layers * 3 + 2); // input + 3 * layer_num + output
+  ICHECK_EQ(types.size(), num_layers * 2 + 2); // input + 2 * layer_num + output
   const auto data_layout_array = param->data_layout_array;
   const auto kernel_layout_array = param->kernel_layout_array;
   const auto out_layout_array = param->out_layout_array;
@@ -313,9 +313,8 @@ bool FusedConv2DRel(const Array<Type>& types, int num_inputs, const Attrs& attrs
 
   auto layer_input_shape = data->shape;
   for (int i = 0; i < num_layers; i++) {
-    auto weight = types[3 * i + 1].as<TensorTypeNode>();
-    auto scale = types[3 * i + 2].as<TensorTypeNode>();
-    auto shift = types[3 * i + 3].as<TensorTypeNode>();
+    auto weight = types[2 * i + 1].as<TensorTypeNode>();
+    auto bias = types[2 * i + 2].as<TensorTypeNode>();
 
     const Layout in_layout(data_layout_array[i]);
     const Layout kernel_layout(kernel_layout_array[i]);
@@ -389,7 +388,7 @@ bool FusedConv2DRel(const Array<Type>& types, int num_inputs, const Attrs& attrs
       dilated_ksize_x = 1 + (kernel_size[1] - 1) * dilation[1];
 
       // assign result to reporter
-      reporter->Assign(types[3 * i + 1], TensorType(wshape, out_dtype));
+      reporter->Assign(types[2 * i + 1], TensorType(wshape, out_dtype));
     } else {
       // use weight to infer the conv shape.
       if (weight == nullptr) return false;
@@ -457,18 +456,14 @@ bool FusedConv2DRel(const Array<Type>& types, int num_inputs, const Attrs& attrs
       oshape.Set(3, dshape_nchw[3]);
     }
     layer_input_shape = trans_out_layout.BackwardShape(oshape);
-    if (scale != nullptr) {
-      Array<IndexExpr> scale_shape({oshape[1]});
-      reporter->Assign(types[3 * i + 2], TensorType(scale_shape, out_dtype));
-    }
-    if (shift != nullptr) {
-      Array<IndexExpr> shift_shape({oshape[1]});
-      reporter->Assign(types[3 * i + 3], TensorType(shift_shape, out_dtype));
+    if (bias != nullptr) {
+      Array<IndexExpr> bias_shape({oshape[1]});
+      reporter->Assign(types[2 * i + 2], TensorType(bias_shape, out_dtype));
     }
   }
 
   // assign output type
-  reporter->Assign(types[7], TensorType(layer_input_shape, out_dtype));
+  reporter->Assign(types[5], TensorType(layer_input_shape, out_dtype));
   return true;
 }
 
@@ -1368,11 +1363,13 @@ Array<Array<Layout> > FusedConv2DInferCorrectLayout(const Attrs& attrs,
                                              const Array<Layout>& old_in_layouts,
                                              const Array<tvm::relay::Type>& old_in_types) {
   const T* params = attrs.as<T>();
+  auto layer_1_bias_layout = "C";
+  auto layer_2_bias_layout = "C";
 
   // We always make other operators to fit the layouts of convolution layers
   // So this inference ignores all inputs
   return Array<Array<Layout> >{
-      {params->data_layout_array[0], params->kernel_layout_array[0], "C", "C", params->kernel_layout_array[1], "C", "C"},
+      {params->data_layout_array[0], params->kernel_layout_array[0], layer_1_bias_layout, params->kernel_layout_array[1], layer_2_bias_layout},
       {params->out_layout_array[1] == "" ? params->data_layout_array[0] : params->out_layout_array[1]}}; // Output layout could be different from input layout.
 }
 

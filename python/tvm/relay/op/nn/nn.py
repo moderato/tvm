@@ -226,8 +226,8 @@ def conv2d(
 
 
 def fused_conv2d(   data,
-                    weight1, scale1, shift1,
-                    weight2, scale2, shift2,
+                    weight1, bias1,
+                    weight2, bias2,
                     strides_array, padding_array, dilation_array,
                     groups_array, channels_array, kernel_size_array, bn_relu_array,
                     data_layout_array, kernel_layout_array, out_layout_array, out_dtype):
@@ -237,8 +237,8 @@ def fused_conv2d(   data,
     padding_array = [get_pad_tuple2d(padding) for padding in padding_array]
 
     return _make.fused_conv2d(  data, 
-                                weight1, scale1, shift1,
-                                weight2, scale2, shift2,
+                                weight1, bias1,
+                                weight2, bias2,
                                 strides_array, padding_array, dilation_array, 
                                 groups_array, channels_array, kernel_size_array, bn_relu_array,
                                 data_layout_array, kernel_layout_array, out_layout_array, out_dtype)

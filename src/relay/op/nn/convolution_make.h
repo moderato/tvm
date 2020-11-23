@@ -57,8 +57,8 @@ inline Expr MakeConv(Expr data, Expr weight, Array<IndexExpr> strides, Array<Ind
 
 template <typename T>
 inline Expr MakeFusedConv2D(Expr data,
-                            Expr weight1, Expr scale1, Expr shift1,
-                            Expr weight2, Expr scale2, Expr shift2,
+                            Expr weight1, Expr bias1,
+                            Expr weight2, Expr bias2,
                             Array<Array<IndexExpr>> strides_array,
                             Array<Array<IndexExpr>> padding_array,
                             Array<Array<IndexExpr>> dilation_array,
@@ -85,7 +85,7 @@ inline Expr MakeFusedConv2D(Expr data,
   fused_conv2d_attrs->out_layout_array = std::move(out_layout_array);
   fused_conv2d_attrs->out_dtype = std::move(out_dtype);
   const Op& op = Op::Get(op_name);
-  return Call(op, {data, weight1, scale1, shift1, weight2, scale2, shift2}, Attrs(fused_conv2d_attrs), {});
+  return Call(op, {data, weight1, bias1, weight2, bias2}, Attrs(fused_conv2d_attrs), {});
 }
 
 template <typename T>

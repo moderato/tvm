@@ -125,8 +125,8 @@ TVM_REGISTER_NODE_TYPE(FusedConv2DAttrs);
 TVM_REGISTER_GLOBAL("relay.op.nn._make.fused_conv2d")
     .set_body_typed([](
                         Expr data,
-                        Expr weight1, Expr scale1, Expr shift1,
-                        Expr weight2, Expr scale2, Expr shift2,
+                        Expr weight1, Expr bias1,
+                        Expr weight2, Expr bias2,
                         Array<Array<IndexExpr>> strides_array,
                         Array<Array<IndexExpr>> padding_array,
                         Array<Array<IndexExpr>> dilation_array,
@@ -139,8 +139,8 @@ TVM_REGISTER_GLOBAL("relay.op.nn._make.fused_conv2d")
                         Array<String> out_layout_array,
                         DataType out_dtype) {
       return MakeFusedConv2D<FusedConv2DAttrs>( data,
-                                                weight1, scale1, shift1,
-                                                weight2, scale2, shift2,
+                                                weight1, bias1,
+                                                weight2, bias2,
                                                 strides_array, padding_array, dilation_array,
                                                 groups_array, channels_array, kernel_size_array, bn_relu_array,
                                                 data_layout_array, kernel_layout_array, out_layout_array, out_dtype,
@@ -152,14 +152,12 @@ RELAY_REGISTER_OP("nn.fused_conv2d")
         Fused conv2d.
 )code" TVM_ADD_FILELINE)
     .set_attrs_type<FusedConv2DAttrs>()
-    .set_num_inputs(7)
+    .set_num_inputs(5)
     .add_argument("data", "Tensor", "The input tensor.")
     .add_argument("weight1", "Tensor", "The first weight tensor.")
-    .add_argument("scale1", "Tensor", "The first scale tensor.")
-    .add_argument("shift1", "Tensor", "The first shift tensor.")
+    .add_argument("bias1", "Tensor", "The first scale tensor.")
     .add_argument("weight2", "Tensor", "The second weight tensor.")
-    .add_argument("scale2", "Tensor", "The second scale tensor.")
-    .add_argument("shift2", "Tensor", "The second shift tensor.")
+    .add_argument("bias2", "Tensor", "The second shift tensor.")
     .set_support_level(2)
     .add_type_rel("FusedConv2D", FusedConv2DRel<FusedConv2DAttrs>)
     .set_attr<FInferCorrectLayout>("FInferCorrectLayout", FusedConv2DInferCorrectLayout<FusedConv2DAttrs>);

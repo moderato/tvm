@@ -32,6 +32,7 @@ from . import _backend
 logger = logging.getLogger("compile_engine")
 autotvm_logger = logging.getLogger("autotvm")
 
+
 @tvm._ffi.register_object("relay.LoweredOutput")
 class LoweredOutput(Object):
     """Lowered output"""
