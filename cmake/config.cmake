@@ -159,7 +159,7 @@ set(USE_TENSORFLOW_PATH none)
 set(USE_CUDNN ON)
 
 # Whether use cuBLAS
-set(USE_CUBLAS ON)
+set(USE_CUBLAS OFF)
 
 # Whether use MIOpen
 set(USE_MIOPEN OFF)
