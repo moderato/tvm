@@ -186,7 +186,7 @@ struct FusedConv2DAttrs : public tvm::AttrsNode<FusedConv2DAttrs> {
   Array<Integer> groups_array;
   Array<IndexExpr> channels_array;
   Array<Array<IndexExpr>> kernel_size_array;
-  Array<Bool> bn_relu_array;
+  Array<String> post_op_array;
   Array<String> data_layout_array;
   Array<String> kernel_layout_array;
   Array<String> out_layout_array;
@@ -222,7 +222,8 @@ struct FusedConv2DAttrs : public tvm::AttrsNode<FusedConv2DAttrs> {
     TVM_ATTR_FIELD(out_layout_array)
         .set_default(Array<String>({"", ""}))
         .describe("");
-    TVM_ATTR_FIELD(bn_relu_array)
+    TVM_ATTR_FIELD(post_op_array)
+        .set_default(Array<String>({"", ""}))
         .describe("BN ReLU of each fused layer.");
     // use 0 bits to indicate none.
     TVM_ATTR_FIELD(out_dtype)

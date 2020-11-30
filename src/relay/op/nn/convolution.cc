@@ -133,7 +133,7 @@ TVM_REGISTER_GLOBAL("relay.op.nn._make.fused_conv2d")
                         Array<Integer> groups_array,
                         Array<IndexExpr> channels_array,
                         Array<Array<IndexExpr>> kernel_size_array,
-                        Array<Bool> bn_relu_array,
+                        Array<String> post_op_array,
                         Array<String> data_layout_array,
                         Array<String> kernel_layout_array,
                         Array<String> out_layout_array,
@@ -142,7 +142,7 @@ TVM_REGISTER_GLOBAL("relay.op.nn._make.fused_conv2d")
                                                 weight1, bias1,
                                                 weight2, bias2,
                                                 strides_array, padding_array, dilation_array,
-                                                groups_array, channels_array, kernel_size_array, bn_relu_array,
+                                                groups_array, channels_array, kernel_size_array, post_op_array,
                                                 data_layout_array, kernel_layout_array, out_layout_array, out_dtype,
                                                 "nn.fused_conv2d");
     });

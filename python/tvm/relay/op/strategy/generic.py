@@ -327,7 +327,7 @@ def fused_conv2d_strategy(attrs, inputs, out_type, target):
         return wrapper
 
     parameters = get_fusion_parameters_from_fused_conv2d_attrs(attrs, inputs)
-    fc = FusionComposer(parameters, auto_tvm=True, target=target)
+    fc = FusionComposer(parameters, use_autotvm=True, target=target)
     strategy = _op.OpStrategy()
     strategy.add_implementation(
         wrap_compute_fused_conv2d(fc.get_compute()),

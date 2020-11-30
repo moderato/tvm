@@ -23,6 +23,7 @@ from .op import (
     register_gradient,
     register_pattern,
     register_alter_op_layout,
+    register_convert_op_layout,
     register_legalize,
     OpPattern,
     OpStrategy,

@@ -65,7 +65,7 @@ inline Expr MakeFusedConv2D(Expr data,
                             Array<Integer> groups_array,
                             Array<IndexExpr> channels_array,
                             Array<Array<IndexExpr>> kernel_size_array,
-                            Array<Bool> bn_relu_array,
+                            Array<String> post_op_array,
                             Array<String> data_layout_array,
                             Array<String> kernel_layout_array,
                             Array<String> out_layout_array,
@@ -79,7 +79,7 @@ inline Expr MakeFusedConv2D(Expr data,
   fused_conv2d_attrs->groups_array = std::move(groups_array);
   fused_conv2d_attrs->channels_array = std::move(channels_array);
   fused_conv2d_attrs->kernel_size_array = std::move(kernel_size_array);
-  fused_conv2d_attrs->bn_relu_array = std::move(bn_relu_array);
+  fused_conv2d_attrs->post_op_array = std::move(post_op_array);
   fused_conv2d_attrs->data_layout_array = std::move(data_layout_array);
   fused_conv2d_attrs->kernel_layout_array = std::move(kernel_layout_array);
   fused_conv2d_attrs->out_layout_array = std::move(out_layout_array);
