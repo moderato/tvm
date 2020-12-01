@@ -229,7 +229,7 @@ def fused_conv2d(   data,
                     weight1, bias1,
                     weight2, bias2,
                     strides_array, padding_array, dilation_array,
-                    groups_array, channels_array, kernel_size_array, bn_relu_array,
+                    groups_array, channels_array, kernel_size_array, post_op_array,
                     data_layout_array, kernel_layout_array, out_layout_array, out_dtype):
     kernel_size_array = [(kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size for kernel_size in kernel_size_array]
     strides_array = [(strides, strides) if isinstance(strides, int) else strides for strides in strides_array]
@@ -240,7 +240,7 @@ def fused_conv2d(   data,
                                 weight1, bias1,
                                 weight2, bias2,
                                 strides_array, padding_array, dilation_array, 
-                                groups_array, channels_array, kernel_size_array, bn_relu_array,
+                                groups_array, channels_array, kernel_size_array, post_op_array,
                                 data_layout_array, kernel_layout_array, out_layout_array, out_dtype)
 
 

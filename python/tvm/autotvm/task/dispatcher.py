@@ -398,6 +398,14 @@ class ApplyGraphBest(DispatchContext):
         self._counter = 0
         self._global_cfg_dict = {}
 
+        # Workaround for fused_conv2d
+        self.fused_conv2d_list = []
+        self.fused_conv2d_current_call_count = 0
+        self.fused_conv2d_pointer = 0
+
+    def _is_fused_conv2d(self, workload):
+        return 'fused' in workload[0]
+
     def _query_inside(self, target, workload):
         """
         Query the context to get config from records.
@@ -422,6 +430,11 @@ class ApplyGraphBest(DispatchContext):
             self._counter += 1
             self.update(target, wkl, cfg)
             cfg.workload = wkl
+            if self._is_fused_conv2d(wkl):
+                if not self.fused_conv2d_list or\
+                    (self.fused_conv2d_list and\
+                        not (wkl == self.fused_conv2d_list[0][1].workload and cfg.to_json_dict()['entity'] == self.fused_conv2d_list[0][1].to_json_dict()['entity'])):
+                    self.fused_conv2d_list = [(wkl, cfg)] + self.fused_conv2d_list
             return cfg
         key = (str(target), workload)
         if key not in self._global_cfg_dict:
@@ -434,7 +447,15 @@ class ApplyGraphBest(DispatchContext):
             cfg = FallbackConfigEntity()
             self._global_cfg_dict[key] = cfg
         else:
-            cfg = self._global_cfg_dict[key]
+            if self._is_fused_conv2d(workload):
+                cfg = self.fused_conv2d_list[self.fused_conv2d_pointer][1]
+                print(self.fused_conv2d_list[self.fused_conv2d_pointer][0])
+                self.fused_conv2d_current_call_count += 1
+                if self.fused_conv2d_current_call_count >= 2:
+                    self.fused_conv2d_current_call_count = 0
+                    self.fused_conv2d_pointer += 1
+            else:
+                cfg = self._global_cfg_dict[key]
         return cfg
 
     def update(self, target, workload, cfg):
