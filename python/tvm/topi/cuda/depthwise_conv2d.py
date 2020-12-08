@@ -37,11 +37,13 @@ def depthwise_conv2d_nhwc(cfg, data, kernel, strides, padding, dilation, out_dty
 @autotvm.register_topi_schedule("depthwise_conv2d_nchw.cuda")
 def schedule_depthwise_conv2d_nchw(cfg, outs):
     """Schedule for depthwise_conv2d nchw forward.
+
     Parameters
     ----------
     outs: Array of Tensor
         The computation graph description of depthwise_conv2d
         in the format of an array of tensors.
+
     Returns
     -------
     s: Schedule
