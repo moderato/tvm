@@ -108,7 +108,7 @@ def separable_conv_block(
     return act2
 
 
-def bottleneck_block(data, name, input_channels, t, output_channels, s,
+def bottleneck_block(data, name, input_channels, output_channels, t, s,
                         epsilon=1e-5, layout='NCHW', dtype="float32"):
     bn_axis = layout.index('C')
     residual = (input_channels == output_channels) and (s == 1)
@@ -131,7 +131,7 @@ def bottleneck_block(data, name, input_channels, t, output_channels, s,
         wshape = (3, 3) + (t*input_channels, 1)
     else:
         raise ValueError("Invalid layout: " + layout)
-    weight = relay.var(name + "_weight", shape=wshape, dtype=dtype)
+    weight = relay.var(name + "_depthwise_conv_weight", shape=wshape, dtype=dtype)
     conv2 = layers.conv2d(
         data=act1,
         weight=weight,
@@ -142,7 +142,7 @@ def bottleneck_block(data, name, input_channels, t, output_channels, s,
         padding=(1, 1),
         data_layout=layout,
         kernel_layout=layers.conv_kernel_layout(layout, is_depthwise=True),
-        name=name + '_depthwise_conv1')
+        name=name + '_depthwise_conv')
     bn2 = layers.batch_norm_infer(data=conv2, epsilon=epsilon, axis=bn_axis, name=name+'_bn2')
     act2 = relay.nn.relu(data=bn2)
 
@@ -156,12 +156,11 @@ def bottleneck_block(data, name, input_channels, t, output_channels, s,
         kernel_layout=layers.conv_kernel_layout(layout),
         name=name + '_conv2')
     bn3 = layers.batch_norm_infer(data=conv3, epsilon=epsilon, axis=bn_axis, name=name+'_bn3')
-    act3 = relay.nn.relu(data=bn3)
 
     if residual:
-        output = relay.add(data, act3)
+        output = relay.add(data, bn3)
     else:
-        output = act3
+        output = bn3
     return output
 
 
@@ -295,7 +294,9 @@ def mobile_net_v2(num_classes=1000, data_shape=(1, 3, 224, 224),
     ic = 32
     for idx, (t, oc, n, s) in enumerate(cfgs):
         for i in range(n):
-            body = bottleneck_block(body, 'bottleneck_block_{}_{}'.format(idx+1, i+1), ic, t, oc, s, layout=layout, dtype=dtype)
+            body = bottleneck_block(body, 'bottleneck_block_{}_{}'.format(idx+1, i+1),
+                                    ic, oc, t, s if i == 0 else 1,
+                                    layout=layout, dtype=dtype)
             ic = oc
 
     body = conv_block(body, 'conv_block_2', 
@@ -305,13 +306,12 @@ def mobile_net_v2(num_classes=1000, data_shape=(1, 3, 224, 224),
                         padding=(0, 0), 
                         layout=layout)
     pool = relay.nn.global_avg_pool2d(data=body, layout=layout)
-    output = conv_block(pool, 'conv_block_3',
-                        channels=num_classes,
-                        kernel_size=(1, 1),
-                        strides=(1, 1),
-                        padding=(0, 0),
-                        layout=layout)
-    return relay.Function(relay.analysis.free_vars(output), output)
+    flatten = relay.nn.batch_flatten(data=pool)
+    weight = relay.var("fc_weight")
+    bias = relay.var("fc_bias")
+    fc = relay.nn.dense(data=flatten, weight=weight, units=num_classes)
+    fc = relay.nn.bias_add(fc, bias)
+    return relay.Function(relay.analysis.free_vars(fc), fc)
 
 
 def get_workload(batch_size=1, num_classes=1000, image_shape=(3, 224, 224), version='v1',

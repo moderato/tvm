@@ -202,14 +202,17 @@ class BaseGraphTuner(object):
                         node_entry["topi_op"].append(input_topi_op)
                         # Only replace the first input tensor
                         input_workload = input_node["workloads"][0]
-                        first_tensor = input_workload[1]
-                        dtype = first_tensor[-1]
-                        new_shape = tuple([val.value for val in node_entry["types"][0].shape])
-                        actual_workload = (
-                            (input_workload[0],)
-                            + (("TENSOR", new_shape, dtype),)
-                            + input_workload[2:]
-                        )
+                        if input_node['op'] == relay.op.get("nn.fused_conv2d") or "fused" in input_workload[0]:
+                            actual_workload = input_workload
+                        else:
+                            first_tensor = input_workload[1]
+                            dtype = first_tensor[-1]
+                            new_shape = tuple([val.value for val in node_entry["types"][0].shape])
+                            actual_workload = (
+                                (input_workload[0],)
+                                + (("TENSOR", new_shape, dtype),)
+                                + input_workload[2:]
+                            )
                         node_entry["workloads"].append(actual_workload)
                         if "record_candidates" not in node_entry:
                             node_entry["record_candidates"] = input_node["record_candidates"]

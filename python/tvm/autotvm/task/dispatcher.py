@@ -400,11 +400,16 @@ class ApplyGraphBest(DispatchContext):
 
         # Workaround for fused_conv2d
         self.fused_conv2d_list = []
-        self.fused_conv2d_current_call_count = 0
-        self.fused_conv2d_pointer = 0
+        self.fused_conv2d_pointer = -1
 
     def _is_fused_conv2d(self, workload):
         return 'fused' in workload[0]
+
+    def _contains_boolean(self, workload):
+        for x in workload[1]:
+            if isinstance(x, bool):
+                return True
+        return False
 
     def _query_inside(self, target, workload):
         """
@@ -448,12 +453,9 @@ class ApplyGraphBest(DispatchContext):
             self._global_cfg_dict[key] = cfg
         else:
             if self._is_fused_conv2d(workload):
-                cfg = self.fused_conv2d_list[self.fused_conv2d_pointer][1]
-                print(self.fused_conv2d_list[self.fused_conv2d_pointer][0])
-                self.fused_conv2d_current_call_count += 1
-                if self.fused_conv2d_current_call_count >= 2:
-                    self.fused_conv2d_current_call_count = 0
+                if self._contains_boolean(workload): # Only move the pointer when it contains boolean (meaning 1st query)
                     self.fused_conv2d_pointer += 1
+                cfg = self.fused_conv2d_list[self.fused_conv2d_pointer][1]
             else:
                 cfg = self._global_cfg_dict[key]
         return cfg
