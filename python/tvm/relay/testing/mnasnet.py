@@ -173,11 +173,13 @@ def bottleneck_block(data, name, input_channels, t, output_channels, s,
 
 
 def se_block(data, name, input_channels, ratio=0.25, layout='NCHW', dtype='float32'):
-    pooled = relay.nn.global_avg_pool2d(data, layout=layout)
-    dense1 = layers.dense_add_bias(pooled, units=int(input_channels*ratio), name=name + '_dense1')
+    pool = relay.nn.global_avg_pool2d(data, layout=layout)
+    flatten = relay.nn.batch_flatten(data=pool)
+    dense1 = layers.dense_add_bias(flatten, units=int(input_channels*ratio), name=name + '_dense1')
     relu = relay.nn.relu(data=dense1)
     dense2 = layers.dense_add_bias(relu, units=input_channels, name=name + '_dense2')
     sigmoid = relay.sigmoid(dense2)
+    sigmoid = relay.expand_dims(sigmoid, axis=(-1 if layout == 'NCHW' else 1), num_newaxis=2)
     mul = relay.multiply(data, sigmoid)
     return mul
 
@@ -211,8 +213,6 @@ def mnasnet(
                         padding=(0, 0), 
                         layout=layout)
     pool = relay.nn.global_avg_pool2d(data=body, layout=layout)
-
-
     flatten = relay.nn.batch_flatten(data=pool)
     weight = relay.var("fc_weight")
     bias = relay.var("fc_bias")
