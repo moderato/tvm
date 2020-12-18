@@ -17,7 +17,7 @@
 """Definition of CUDA/GPU operator strategy."""
 # pylint: disable=invalid-name,unused-argument,wildcard-import,unused-wildcard-import
 from tvm import topi
-import tvm
+from tvm.auto_scheduler import is_auto_scheduler_enabled
 from tvm.te import SpecializedCondition
 from tvm.contrib import nvcc
 from tvm._ffi import get_global_func
@@ -142,10 +142,6 @@ def conv2d_strategy_cuda(attrs, inputs, out_type, target):
                     name="conv2d_nchw_winograd.cuda",
                     plevel=5,
                 )
-
-            strategy.add_auto_scheduler(
-                wrap_compute_conv2d(topi.nn.conv2d_nchw), name="conv2d_nchw"
-            )
         elif layout == "HWCN":
             assert kernel_layout == "HWIO"
             strategy.add_implementation(
@@ -188,7 +184,7 @@ def conv2d_strategy_cuda(attrs, inputs, out_type, target):
             if judge_winograd_autotvm:
                 if (
                     target.kind.name == "cuda"
-                    and nvcc.have_tensorcore(tvm.gpu(0).compute_version)
+                    and nvcc.have_tensorcore(target=target)
                     and judge_winograd_tensorcore
                 ):
                     strategy.add_implementation(
@@ -206,7 +202,7 @@ def conv2d_strategy_cuda(attrs, inputs, out_type, target):
                     )
             if (
                 target.kind.name == "cuda"
-                and nvcc.have_tensorcore(tvm.gpu(0).compute_version)
+                and nvcc.have_tensorcore(target=target)
                 and (
                     (N % 16 == 0 and CI % 16 == 0 and CO % 16 == 0)
                     or (N % 8 == 0 and CI % 16 == 0 and CO % 32 == 0)
@@ -221,13 +217,12 @@ def conv2d_strategy_cuda(attrs, inputs, out_type, target):
                 )
 
             # register auto-scheduler implementations
-            if judge_winograd_auto_scheduler:
-                strategy.add_auto_scheduler(
-                    wrap_compute_conv2d(topi.nn.conv2d_winograd_nhwc), name="conv2d_nhwc.winograd"
-                )
-            else:
-                strategy.add_auto_scheduler(
-                    wrap_compute_conv2d(topi.nn.conv2d_nhwc), name="conv2d_nhwc"
+            if is_auto_scheduler_enabled() and judge_winograd_auto_scheduler:
+                strategy.add_implementation(
+                    wrap_compute_conv2d(topi.nn.conv2d_winograd_nhwc),
+                    naive_schedule,  # this implementation should never be picked by autotvm
+                    name="conv2d_nhwc.winograd",
+                    plevel=15,
                 )
 
         elif layout == "HWNC":
@@ -286,21 +281,11 @@ def conv2d_strategy_cuda(attrs, inputs, out_type, target):
                 wrap_topi_schedule(topi.cuda.schedule_depthwise_conv2d_nchw),
                 name="depthwise_conv2d_nchw.cuda",
             )
-
-            strategy.add_auto_scheduler(
-                wrap_compute_conv2d(topi.nn.depthwise_conv2d_nchw),
-                name="depthwise_conv2d_nchw.cuda",
-            )
         elif layout == "NHWC":
             assert kernel_layout == "HWOI"
             strategy.add_implementation(
                 wrap_compute_conv2d(topi.cuda.depthwise_conv2d_nhwc),
                 wrap_topi_schedule(topi.cuda.schedule_depthwise_conv2d_nhwc),
-                name="depthwise_conv2d_nhwc.cuda",
-            )
-
-            strategy.add_auto_scheduler(
-                wrap_compute_conv2d(topi.nn.depthwise_conv2d_nhwc),
                 name="depthwise_conv2d_nhwc.cuda",
             )
         else:
@@ -438,7 +423,7 @@ def conv2d_winograd_without_weight_transfrom_strategy_cuda(attrs, inputs, out_ty
         )
         if (
             target.kind.name == "cuda"
-            and nvcc.have_tensorcore(tvm.gpu(0).compute_version)
+            and nvcc.have_tensorcore(target=target)
             and judge_winograd_tensorcore
         ):
             strategy.add_implementation(
@@ -459,11 +444,13 @@ def conv2d_winograd_without_weight_transfrom_strategy_cuda(attrs, inputs, out_ty
                 name="conv2d_nhwc_winograd_direct_without_weight_transform.cuda",
             )
 
-        # register auto-scheduler implementations
-        strategy.add_auto_scheduler(
-            wrap_compute_conv2d(topi.nn.conv2d_winograd_nhwc_without_weight_transform),
-            name="conv2d_nhwc_winograd_without_weight_transform",
-        )
+        if is_auto_scheduler_enabled():
+            strategy.add_implementation(
+                wrap_compute_conv2d(topi.nn.conv2d_winograd_nhwc_without_weight_transform),
+                naive_schedule,  # this implementation should never be picked by autotvm
+                name="conv2d_nhwc_winograd_without_weight_transform",
+                plevel=15,
+            )
     else:
         raise RuntimeError(
             "Unsupported conv2d_winograd_without_weight_transfrom layout {}".format(layout)
@@ -475,13 +462,23 @@ def conv2d_winograd_without_weight_transfrom_strategy_cuda(attrs, inputs, out_ty
 def deformable_conv2d_strategy_cuda(attrs, inputs, out_type, target):
     """deformable_conv2d cuda strategy"""
     layout = attrs.data_layout
-    assert layout == "NCHW"
     strategy = _op.OpStrategy()
-    strategy.add_implementation(
-        wrap_compute_deformable_conv2d(topi.cuda.deformable_conv2d_nchw),
-        wrap_topi_schedule(topi.cuda.schedule_deformable_conv2d_nchw),
-        name="deformable_conv2d_nchw.cuda",
-    )
+
+    if layout == "NCHW":
+        strategy.add_implementation(
+            wrap_compute_deformable_conv2d(topi.cuda.deformable_conv2d_nchw),
+            wrap_topi_schedule(topi.cuda.schedule_deformable_conv2d_nchw),
+            name="deformable_conv2d_nchw.cuda",
+        )
+    elif layout == "NHWC":
+        # This implementation should never be picked by autotvm
+        strategy.add_implementation(
+            wrap_compute_deformable_conv2d(topi.nn.deformable_conv2d_nhwc),
+            naive_schedule,
+            name="deformable_conv2d_nhwc.cuda",
+        )
+    else:
+        raise RuntimeError("Layout %s is not supported in deformable conv2d on CUDA" % layout)
     return strategy
 
 
@@ -553,11 +550,6 @@ def conv3d_strategy_cuda(attrs, inputs, out_type, target):
                 name="conv3d_ncdhw_winograd.cuda",
                 plevel=5,
             )
-
-        strategy.add_auto_scheduler(
-            wrap_compute_conv3d(topi.nn.conv3d_ncdhw),
-            name="conv3d_ncdhw.cuda",
-        )
     else:  # layout == "NDHWC":
         strategy.add_implementation(
             wrap_compute_conv3d(topi.cuda.conv3d_ndhwc),
@@ -568,7 +560,7 @@ def conv3d_strategy_cuda(attrs, inputs, out_type, target):
         N, _, _, _, _ = get_const_tuple(data.shape)
         _, _, _, CI, CO = get_const_tuple(kernel.shape)
         if target.kind.name == "cuda":
-            if nvcc.have_tensorcore(tvm.gpu(0).compute_version):
+            if nvcc.have_tensorcore(target=target):
                 if (
                     (N % 16 == 0 and CI % 16 == 0 and CO % 16 == 0)
                     or (N % 8 == 0 and CI % 16 == 0 and CO % 32 == 0)
@@ -580,11 +572,6 @@ def conv3d_strategy_cuda(attrs, inputs, out_type, target):
                         name="conv3d_ndhwc_tensorcore.cuda",
                         plevel=20,
                     )
-
-        strategy.add_auto_scheduler(
-            wrap_compute_conv3d(topi.nn.conv3d_ndhwc),
-            name="conv3d_ndhwc.cuda",
-        )
 
     if target.kind.name == "cuda" and "cudnn" in target.libs:
         strategy.add_implementation(
@@ -681,11 +668,6 @@ def dense_strategy_cuda(attrs, inputs, out_type, target):
             name="dense_small_batch.cuda",
         )
 
-        strategy.add_auto_scheduler(
-            wrap_compute_dense(topi.nn.dense),
-            name="dense",
-        )
-
         with SpecializedCondition(b >= 32):
             strategy.add_implementation(
                 wrap_compute_dense(topi.cuda.dense_large_batch),
@@ -694,7 +676,7 @@ def dense_strategy_cuda(attrs, inputs, out_type, target):
                 plevel=5,
             )
         if target.kind.name == "cuda":
-            if nvcc.have_tensorcore(tvm.gpu(0).compute_version):
+            if nvcc.have_tensorcore(target=target):
                 if (
                     (i % 16 == 0 and b % 16 == 0 and o % 16 == 0)
                     or (i % 16 == 0 and b % 8 == 0 and o % 32 == 0)
@@ -785,6 +767,39 @@ def scatter_add_cuda(attrs, inputs, out_type, target):
         name="scatter_add.cuda",
         plevel=10,
     )
+    return strategy
+
+
+@scatter_nd_strategy.register(["cuda", "gpu"])
+def scatter_nd_cuda(attrs, inputs, out_type, target):
+    """scatter_nd cuda strategy"""
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_scatter_nd(topi.cuda.scatter_nd),
+        wrap_topi_schedule(topi.generic.schedule_extern),
+        name="scatter_nd.cuda",
+        plevel=10,
+    )
+
+
+@sort_strategy.register(["cuda", "gpu"])
+def sort_strategy_cuda(attrs, inputs, out_type, target):
+    """sort cuda strategy"""
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_sort(topi.cuda.sort),
+        wrap_topi_schedule(topi.cuda.schedule_sort),
+        name="sort.cuda",
+    )
+    if target.kind.name == "cuda" and get_global_func(
+        "tvm.contrib.thrust.sort", allow_missing=True
+    ):
+        strategy.add_implementation(
+            wrap_compute_sort(topi.cuda.sort_thrust),
+            wrap_topi_schedule(topi.cuda.schedule_sort),
+            name="sort_thrust.cuda",
+            plevel=15,
+        )
     return strategy
 
 
@@ -921,5 +936,17 @@ def correlation_strategy_cuda(attrs, inputs, out_type, target):
         wrap_compute_correlation(topi.cuda.correlation_nchw),
         wrap_topi_schedule(topi.cuda.schedule_correlation_nchw),
         name="correlation.cuda",
+    )
+    return strategy
+
+
+@argwhere_strategy.register(["cuda", "gpu"])
+def argwhere_strategy_cuda(attrs, inputs, out_type, target):
+    """argwhere cuda strategy"""
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_argwhere(topi.cuda.argwhere),
+        wrap_topi_schedule(topi.cuda.schedule_argwhere),
+        name="argwhere.cuda",
     )
     return strategy

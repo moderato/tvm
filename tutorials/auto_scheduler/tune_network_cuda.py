@@ -37,7 +37,7 @@ for good schedules (low-level optimizations).
 Different from the template-based :ref:`autotvm <tutorials-autotvm-sec>` which relies on
 manual templates to define the search space, the auto-scheduler does not require any
 schedule templates. In other words, the auto-scheduler only uses the compute declarations
-in :code:`tvm/python/topi` while does not use existing schedule templates.
+in :code:`tvm/python/topi` and does not use existing schedule templates.
 
 Note that this tutorial will not run on Windows or recent versions of macOS. To
 get it to run, you will need to wrap the body of this tutorial in a :code:`if
@@ -59,10 +59,11 @@ from tvm.contrib import graph_runtime
 # We can also load models from MXNet, ONNX, PyTorch, and TensorFlow
 # (see :ref:`front end tutorials<tutorial-frontend>`).
 #
-# Note that although auto-scheduler can work with any layouts,
-# we found that the best performance is typically archived with NHWC layout
-# for convolutional neural networks, so we use NHWC layout in this tutorial.
-#
+# For convolutional neural networks, although auto-scheduler can work correctly
+# with any layout, we found the best performance is typically achieved with NHWC layout.
+# We also implemented more optimizations for NHWC layout with the auto-scheduler.
+# So it is recommended to convert your models to NHWC layout to use the auto-scheduler.
+# You can use :ref:`ConvertLayout <convert-layout-usage>` pass to do the layout conversion in TVM.
 
 
 def get_network(name, batch_size, layout="NHWC", dtype="float32"):
@@ -102,10 +103,10 @@ def get_network(name, batch_size, layout="NHWC", dtype="float32"):
             batch_size=batch_size, layout=layout, dtype=dtype, image_shape=image_shape
         )
     elif name == "squeezenet_v1.1":
+        assert layout == "NCHW", "squeezenet_v1.1 only supports NCHW layout"
         mod, params = relay.testing.squeezenet.get_workload(
             version="1.1",
             batch_size=batch_size,
-            layout=layout,
             dtype=dtype,
             image_shape=image_shape,
         )
@@ -135,7 +136,7 @@ batch_size = 1
 layout = "NHWC"
 target = tvm.target.Target("cuda")
 dtype = "float32"
-log_file = "%s-%s-B%d.json" % (network, layout, batch_size)
+log_file = "%s-%s-B%d-%s.json" % (network, layout, batch_size, target.kind.name)
 
 #################################################################
 # Extract Search Tasks
@@ -147,9 +148,6 @@ log_file = "%s-%s-B%d.json" % (network, layout, batch_size)
 # as :code:`sum(latency[t] * weight[t])`, where :code:`latency[t]` is the
 # latency of a task and :code:`weight[t]` is the weight of the task.
 # The task scheduler will just optimize this objective.
-
-# Enable auto-scheduler in relay
-auto_scheduler.enable_relay_integration()
 
 # Extract tasks from the network
 print("Extract tasks...")
@@ -170,14 +168,14 @@ for idx, task in enumerate(tasks):
 #   during measurement and avoid other runtime conflicts.
 # * :code:`min_repeat_ms` defines the minimum duration of one "repeat" in every measurement.
 #   This can warmup the GPU, which is necessary to get accurate measurement results.
-#   Typically, we recommend a value > 300 ms.
+#   Typically, we recommend a value >= 300 ms.
 # * :code:`num_measure_trials` is the number of measurement trials we can use during the tuning.
 #   You can set it to a small number (e.g., 200) for a fast demonstrative run.
-#   In practice, we recommend setting it around :code:`1000 * len(tasks)`,
+#   In practice, we recommend setting it around :code:`900 * len(tasks)`,
 #   which is typically enough for the search to converge.
-#   For example, there are 21 tasks in resnet-18, so we can set it as 20000.
+#   For example, there are 24 tasks in resnet-18, so we can set it as 20000.
 #   You can adjust this parameter according to your time budget.
-# * In addition, we use :code:`RecordToFile` to dump measurement records into the log file,
+# * In addition, we use :code:`RecordToFile` to dump measurement records into a log file,
 #   The measurement records can be used to query the history best, resume the search,
 #   and do more analyses later.
 # * see :any:`auto_scheduler.TuningOptions`,
@@ -187,7 +185,7 @@ for idx, task in enumerate(tasks):
 
 def run_tuning():
     print("Begin tuning...")
-    measure_ctx = auto_scheduler.LocalRPCMeasureContext(repeat=1, min_repeat_ms=400, timeout=10)
+    measure_ctx = auto_scheduler.LocalRPCMeasureContext(repeat=1, min_repeat_ms=300, timeout=10)
 
     tuner = auto_scheduler.TaskScheduler(tasks, task_weights)
     tune_option = auto_scheduler.TuningOptions(
@@ -219,29 +217,32 @@ def run_tuning():
 #     ----------------------------------------------------------------------
 #     |  ID  | Latency (ms) | Speed (GFLOPS) | Trials |
 #     -------------------------------------------------
-#     |    0 |        0.014 |          72.07 |     64 |
-#     |    1 |        0.185 |        1250.68 |    128 |
-#     |    2 |        0.142 |        1626.36 |    192 |
-#     |    3 |        0.137 |        1689.42 |    128 |
-#     |    4 |        0.097 |        1189.75 |    128 |
-#     |    5 |        0.092 |        2505.25 |    128 |
-#     |    6 |        0.080 |        2893.08 |    128 |
-#     |    7 |        0.119 |        1947.84 |    128 |
-#     |    8 |        0.090 |        1292.62 |     64 |
-#     |    9 |        0.107 |        2172.30 |     64 |
-#     |   10 |        0.095 |        2439.36 |     64 |
-#     |   11 |        0.077 |        3003.22 |     64 |
-#     |   12 |        0.068 |        1695.13 |     64 |
-#     |   13 |        0.058 |        3979.29 |     64 |
-#     |   14 |        0.048 |        4859.95 |    128 |
-#     |   15 |        0.073 |        3151.76 |     64 |
-#     |   16 |        0.056 |        4265.94 |     64 |
-#     |   17 |        0.009 |        2754.90 |     64 |
-#     |   18 |        0.011 |        1156.08 |     64 |
-#     |   19 |        0.013 |         955.80 |     64 |
-#     |   20 |        0.029 |         437.71 |     64 |
+#     |    0 |        0.005 |           0.88 |     64 |
+#     |    1 |        0.010 |          99.10 |     64 |
+#     |    2 |        0.006 |           0.00 |     64 |
+#     |    3 |        0.145 |         979.78 |    384 |
+#     |    4 |        0.130 |        1097.02 |    384 |
+#     |    5 |        0.143 |         992.69 |    384 |
+#     |    6 |        0.076 |        1526.86 |    192 |
+#     |    7 |        0.115 |         999.44 |    320 |
+#     |    8 |        0.079 |        1449.39 |    320 |
+#     |    9 |        0.122 |         938.73 |    384 |
+#     |   10 |        0.063 |        1832.98 |    192 |
+#     |   11 |        0.072 |        1763.62 |    256 |
+#     |   12 |        0.062 |        2036.40 |    192 |
+#     |   13 |        0.068 |        1874.44 |    192 |
+#     |   14 |        0.049 |        2346.50 |    128 |
+#     |   15 |        0.076 |        1694.31 |    256 |
+#     |   16 |        0.067 |        1933.30 |    448 |
+#     |   17 |        0.076 |        1680.90 |    256 |
+#     |   18 |        0.022 |          98.43 |     64 |
+#     |   19 |        0.076 |        3112.55 |    192 |
+#     |   20 |        0.013 |        2026.44 |     64 |
+#     |   21 |        0.011 |        1136.69 |     64 |
+#     |   22 |        0.013 |         992.47 |     64 |
+#     |   23 |        0.020 |         627.56 |     64 |
 #     -------------------------------------------------
-#     Estimated total latency: 1.649 ms  Trials: 1920  Used time : 3598 s  Next ID: 9
+#     Estimated total latency: 1.587 ms  Trials: 4992  Used time : 13296 s  Next ID: 3
 #
 #   This table lists the latency and (estimated) speed of all tasks.
 #   It also lists the allocation of measurement trials for all tasks.
@@ -276,7 +277,7 @@ def run_tuning():
 # Compile with the history best
 print("Compile...")
 with auto_scheduler.ApplyHistoryBest(log_file):
-    with tvm.transform.PassContext(opt_level=3):
+    with tvm.transform.PassContext(opt_level=3, config={"relay.backend.use_auto_scheduler": True}):
         lib = relay.build(mod, target=target, params=params)
 
 # Create graph runtime
@@ -294,13 +295,18 @@ print("Mean inference time (std dev): %.2f ms (%.2f ms)" % (np.mean(prof_res), n
 
 #################################################################
 # Other Tips
-# --------------------
+# ----------
 # 1. During the tuning, the auto-scheduler needs to compile many programs and
 #    extract feature from them. This part is CPU-intensive,
 #    so a high-performance CPU with many cores is recommended for faster search.
-# 2. If you have multiple GPUs, you can use all of them for measurements to
+# 2. You can use :code:`python3 -m tvm.auto_scheduler.measure_record --mode distill --i log.json`
+#    to distill the large log file and only save the best useful records.
+# 3. You can resume a search from the previous log file. You just need to
+#    add a new argument :code:`load_log_file` when creating the task scheduler
+#    in function :code:`run_tuning`. Say,
+#    :code:`tuner = auto_scheduler.TaskScheduler(tasks, task_weights, load_log_file=log_file)`
+# 4. If you have multiple target GPUs, you can use all of them for measurements to
 #    parallelize the measurements. Check this :ref:`section <tutorials-autotvm-rpc-tracker>`
 #    to learn how to use the RPC Tracker and RPC Server.
 #    To use the RPC Tracker in auto-scheduler, replace the runner in :code:`TuningOptions`
 #    with :any:`auto_scheduler.RPCRunner`.
-#

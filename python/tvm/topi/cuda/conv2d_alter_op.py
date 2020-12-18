@@ -19,7 +19,7 @@
 
 import logging
 import tvm
-from tvm import te, relay, autotvm, auto_scheduler
+from tvm import te, relay, autotvm
 
 from .. import nn
 from ..utils import get_const_tuple
@@ -52,9 +52,7 @@ def _alter_conv2d_layout(attrs, inputs, tinfos, out_type):
         # The best implementation is not an AutoTVM template.
         # It may be from the auto-scheduler
 
-        if impl.name == (
-            "conv2d_nhwc.winograd" + auto_scheduler.relay_integration.auto_schedule_impl_suffix
-        ):
+        if impl.name.find("winograd") != -1:
             if dilation != (1, 1):
                 logger.warning("Does not support weight pre-transform for dilated convolution.")
                 return None
@@ -64,7 +62,7 @@ def _alter_conv2d_layout(attrs, inputs, tinfos, out_type):
             KH, KW, _, CO = get_const_tuple(kernel.shape)
 
             # Pre-compute weight transformation in winograd
-            tile_size = _infer_tile_size(tinfos[0], tinfos[1])
+            tile_size = _infer_tile_size(tinfos[0], tinfos[1], layout="NHWC")
 
             # HWIO -> OIHW
             kernel_transform = relay.transpose(inputs[1], axes=[3, 2, 0, 1])
@@ -161,7 +159,7 @@ def _alter_conv2d_layout(attrs, inputs, tinfos, out_type):
         KH, KW, _, CO = get_const_tuple(kernel.shape)
 
         # Pre-compute weight transformation in winograd
-        tile_size = _infer_tile_size(data, kernel)
+        tile_size = _infer_tile_size(data, kernel, layout="NHWC")
         kernel_transform = relay.transpose(inputs[1], axes=[3, 2, 0, 1])
         weight = relay.nn.contrib_conv2d_winograd_weight_transform(
             kernel_transform, tile_size=tile_size
