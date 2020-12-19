@@ -63,10 +63,8 @@ def residual_unit(
     """
     bn_axis = data_layout.index("C")
     if bottle_neck:
-        bn1 = layers.batch_norm_infer(data=data, epsilon=2e-5, axis=bn_axis, name=name + "_bn1")
-        act1 = relay.nn.relu(data=bn1)
         conv1 = layers.conv2d(
-            data=act1,
+            data=data,
             channels=int(num_filter * 0.25),
             kernel_size=(1, 1),
             strides=stride,
@@ -75,10 +73,10 @@ def residual_unit(
             data_layout=data_layout,
             kernel_layout=kernel_layout,
         )
-        bn2 = layers.batch_norm_infer(data=conv1, epsilon=2e-5, axis=bn_axis, name=name + "_bn2")
-        act2 = relay.nn.relu(data=bn2)
+        bn1 = layers.batch_norm_infer(data=conv1, epsilon=2e-5, axis=bn_axis, name=name + "_bn1")
+        act1 = relay.nn.relu(data=bn1)
         conv2 = layers.conv2d(
-            data=act2,
+            data=act1,
             channels=int(num_filter * 0.25),
             kernel_size=(3, 3),
             strides=(1, 1),
@@ -87,10 +85,10 @@ def residual_unit(
             data_layout=data_layout,
             kernel_layout=kernel_layout,
         )
-        bn3 = layers.batch_norm_infer(data=conv2, epsilon=2e-5, axis=bn_axis, name=name + "_bn3")
-        act3 = relay.nn.relu(data=bn3)
+        bn2 = layers.batch_norm_infer(data=conv2, epsilon=2e-5, axis=bn_axis, name=name + "_bn2")
+        act2 = relay.nn.relu(data=bn2)
         conv3 = layers.conv2d(
-            data=act3,
+            data=act2,
             channels=num_filter,
             kernel_size=(1, 1),
             strides=(1, 1),
@@ -99,11 +97,12 @@ def residual_unit(
             data_layout=data_layout,
             kernel_layout=kernel_layout,
         )
+        bn3 = layers.batch_norm_infer(data=conv3, epsilon=2e-5, axis=bn_axis, name=name + "_bn3")
         if dim_match:
             shortcut = data
         else:
             shortcut = layers.conv2d(
-                data=act1,
+                data=data,
                 channels=num_filter,
                 kernel_size=(1, 1),
                 strides=stride,
@@ -111,12 +110,11 @@ def residual_unit(
                 data_layout=data_layout,
                 kernel_layout=kernel_layout,
             )
-        return relay.add(conv3, shortcut)
+        add = relay.add(bn3, shortcut)
+        return relay.nn.relu(data=add)
 
-    bn1 = layers.batch_norm_infer(data=data, epsilon=2e-5, axis=bn_axis, name=name + "_bn1")
-    act1 = relay.nn.relu(data=bn1)
     conv1 = layers.conv2d(
-        data=act1,
+        data=data,
         channels=num_filter,
         kernel_size=(3, 3),
         strides=stride,
@@ -125,10 +123,10 @@ def residual_unit(
         data_layout=data_layout,
         kernel_layout=kernel_layout,
     )
-    bn2 = layers.batch_norm_infer(data=conv1, epsilon=2e-5, axis=bn_axis, name=name + "_bn2")
-    act2 = relay.nn.relu(data=bn2)
+    bn1 = layers.batch_norm_infer(data=conv1, epsilon=2e-5, axis=bn_axis, name=name + "_bn1")
+    act1 = relay.nn.relu(data=bn1)
     conv2 = layers.conv2d(
-        data=act2,
+        data=act1,
         channels=num_filter,
         kernel_size=(3, 3),
         strides=(1, 1),
@@ -137,12 +135,12 @@ def residual_unit(
         data_layout=data_layout,
         kernel_layout=kernel_layout,
     )
-
+    bn2 = layers.batch_norm_infer(data=conv2, epsilon=2e-5, axis=bn_axis, name=name + "_bn2")
     if dim_match:
         shortcut = data
     else:
         shortcut = layers.conv2d(
-            data=act1,
+            data=data,
             channels=num_filter,
             kernel_size=(1, 1),
             strides=stride,
@@ -150,7 +148,8 @@ def residual_unit(
             data_layout=data_layout,
             kernel_layout=kernel_layout,
         )
-    return relay.add(conv2, shortcut)
+    add = relay.add(bn2, shortcut)
+    return relay.nn.relu(data=add)
 
 
 def resnet(
@@ -199,9 +198,6 @@ def resnet(
     num_unit = len(units)
     assert num_unit == num_stages
     data = relay.var("data", shape=data_shape, dtype=dtype)
-    data = layers.batch_norm_infer(
-        data=data, epsilon=2e-5, axis=bn_axis, scale=False, name="bn_data"
-    )
     (_, _, height, _) = data_shape
     if layout == "NHWC":
         (_, height, _, _) = data_shape
@@ -237,7 +233,7 @@ def resnet(
         body = residual_unit(
             body,
             filter_list[i + 1],
-            (1 if i == 0 else 2, 1 if i == 0 else 2),
+            (1, 1) if i == 0 else (2, 2),
             False,
             name="stage%d_unit%d" % (i + 1, 1),
             bottle_neck=bottle_neck,
@@ -255,12 +251,10 @@ def resnet(
                 data_layout=data_layout,
                 kernel_layout=kernel_layout,
             )
-    bn1 = layers.batch_norm_infer(data=body, epsilon=2e-5, axis=bn_axis, name="bn1")
-    relu1 = relay.nn.relu(data=bn1)
     # Although kernel is not used here when global_pool=True, we should put one
-    pool1 = relay.nn.global_avg_pool2d(data=relu1, layout=data_layout)
-    flat = relay.nn.batch_flatten(data=pool1)
-    fc1 = layers.dense_add_bias(data=flat, units=num_classes, name="fc1")
+    pool1 = relay.nn.global_avg_pool2d(data=body, layout=data_layout)
+    flatten = relay.nn.batch_flatten(data=pool1)
+    fc1 = layers.dense_add_bias(data=flatten, units=num_classes, name="fc1")
     net = relay.nn.softmax(data=fc1)
     return relay.Function(relay.analysis.free_vars(net), net)
 
@@ -274,10 +268,6 @@ def get_net(
     dtype="float32",
     **kwargs,
 ):
-    """
-    Adapted from https://github.com/tornadomeet/ResNet/blob/master/train_resnet.py
-    Original author Wei Wu
-    """
     (_, height, _) = image_shape
     if layout == "NHWC":
         (height, _, _) = image_shape
