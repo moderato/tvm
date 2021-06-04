@@ -19,6 +19,7 @@
 from __future__ import absolute_import as _abs
 from numbers import Integral
 import numpy as np
+import os
 
 
 import tvm
@@ -487,3 +488,339 @@ def is_empty_shape(shape):
       Whether input shape is empty or has dimesion with size 0.
     """
     return cpp.utils.is_empty_shape(shape)
+
+
+class FeatureConfig:
+    def __init__(self, N, H, W, C):
+        self.N = int(N)
+        self.H = int(H)
+        self.W = int(W)
+        self.C = int(C)
+        self.vlen = -1
+        self.shape = (N, H, W, C)
+    def update_shape(self, vlen):
+        self.vlen = vlen
+        C_chunk = tvm.tir.indexdiv(self.C, vlen).value
+        self.shape = (self.N, C_chunk, self.H, self.W, vlen)
+    def get_shape(self):
+        return self.shape
+
+
+class FilterConfig:
+    def __init__(self, H, W, I, O, stride_h, stride_w, depthwise, post_op, dilation=1, padding='SAME'):
+        assert post_op in [None, 'bias', 'relu', 'relu6', 'sigmoid']
+        self.H = int(H)
+        self.W = int(W)
+        self.I = int(I)
+        self.O = int(O)
+        self.stride_h = int(stride_h)
+        self.stride_w = int(stride_w)
+        self.depthwise = bool(depthwise)
+        self.post_op = post_op
+        self.dilation_h = int(dilation)
+        self.dilation_w = int(dilation)
+        self.shape = (int(H), int(W), int(O), int(I)) if depthwise else (int(H), int(W), int(I), int(O))
+        self.vlen_i = -1
+        self.vlen_o = -1
+        if isinstance(padding, str):
+            self.padding = padding
+            self.padding_shape = None
+        else:
+            self.padding = None
+            self.padding_shape = padding
+    def update_shape(self, vlen_i, vlen_o):
+        self.vlen_i = vlen_i
+        self.vlen_o = vlen_o
+        IC_chunk = tvm.tir.indexdiv(self.I, vlen_i).value
+        OC_chunk = tvm.tir.indexdiv(self.O, vlen_o).value
+        self.shape = (OC_chunk, IC_chunk, self.H, self.W, vlen_i, vlen_o) if not self.depthwise else (OC_chunk, 1, self.H, self.W, 1, vlen_o)
+    def get_shape(self):
+        return self.shape
+    def get_padding_shape(self):
+        assert(self.padding_shape is not None)
+        return self.padding_shape[0], self.padding_shape[1], self.padding_shape[2], self.padding_shape[3]
+    def get_stride(self):
+        return self.stride_h, self.stride_w
+    def get_dilation(self):
+        return self.dilation_h, self.dilation_w
+
+
+def get_vlen(axis_length, device=None):
+    if device == 'cuda':
+        candidates = [16, 24, 32, 64, 128]
+    elif 'llvm' in device:
+        candidates = [8, 16, 24, 32, 64] # Non-c axes don't matter
+    vlens = []
+    for i in candidates:
+        if axis_length % i == 0:
+            vlens.append(i)
+    assert vlens != []
+    return vlens
+
+
+def get_4D_shapes_from_params(p):
+    from .nn import get_pad_tuple
+    idx = 0
+    OUTPUT = None
+    layers = []
+    while 1:
+        if idx + 5 > len(p): # Skip is_block for now
+            break
+
+        if not OUTPUT:
+            DATA = FeatureConfig(*p[idx:(idx+4)])
+            idx += 4
+        else:
+            DATA = OUTPUT
+
+        is_depthwise = p[idx+3]
+        # Depthwise: I: 1 (channel_multiplier), O: same as data's C
+        # Normal: I: same as data's C, O: same as output's C
+        FILTER = FilterConfig(p[idx], p[idx], 1 if is_depthwise else DATA.C, DATA.C if is_depthwise else p[idx+1],\
+                                    p[idx+2], *p[(idx+2):(idx+5)])
+        idx += 5
+        layers.append((DATA, FILTER))
+
+        # Compute the output shape with the original input size, i.e. WITHOUT INPUT PACKING
+        dilated_kernel_h = (FILTER.H - 1) * FILTER.dilation_h + 1
+        dilated_kernel_w = (FILTER.W - 1) * FILTER.dilation_w + 1
+        pad_top, pad_left, pad_down, pad_right = get_pad_tuple(
+            FILTER.padding, (dilated_kernel_h, dilated_kernel_w))
+        if FILTER.padding_shape is None:
+            FILTER.padding_shape = (pad_top, pad_left, pad_down, pad_right)
+
+        # Make output
+        ON = DATA.N
+        OH = simplify((DATA.H - dilated_kernel_h + pad_top + pad_down) // FILTER.stride_h + 1)
+        OW = simplify((DATA.W - dilated_kernel_w + pad_left + pad_right) // FILTER.stride_w + 1)
+        OC = FILTER.I * FILTER.O if FILTER.depthwise else FILTER.O
+        OUTPUT = FeatureConfig(ON, OH, OW, OC)
+
+    layers.append((OUTPUT,))
+
+    return layers
+
+
+def export_kernel_launch_config(workload_name, output_shape, best_config, target, unfused=False):
+    assert best_config is not None
+    config_dict = best_config.to_json_dict()
+
+    if target == 'cuda':
+        if not os.path.exists('generated_kernels/gpu/fused/kernel_launch_config'):
+            os.mkdir('generated_kernels/gpu/fused/kernel_launch_config')
+        n = output_shape[0]
+        ho = output_shape[1]
+        wo = output_shape[2]
+        recompute = output_shape[3]
+
+        # print('n: {}, ho: {}, wo: {}, recompute: {}'.format(n, ho, wo, recompute))
+        for e in config_dict['entity']:
+            if e[0] == 'split_1_h': # TODO: Fix it layer with a layer num
+                thz = e[2][1]
+                thy = e[2][2]
+                for ee in e[2][1:]:
+                    ho = (ho + ee - 1) // ee
+                    # print('ho: {}', ho)
+            elif e[0] == 'split_1_w':
+                for ee in e[2][1:]:
+                    wo = (wo + ee - 1) // ee
+                    # print('wo: {}', wo)
+            elif e[0] == 'split_1_c':
+                thx = e[2][2]
+                for ee in e[2][1:]:
+                    recompute = (recompute + ee - 1) // ee
+                    # print('recompute: {}', recompute)
+        blx = n * ho * wo * recompute
+        print('n: {}, ho: {}, wo: {}, recompute: {}'.format(n, ho, wo, recompute))
+        print('thx: {}, thy: {}, thz: {}, blx: {}'.format(thx, thy, thz, blx))
+
+        with open('generated_kernels/gpu/fused/kernel_launch_config/{}_config.csv'.format(workload_name), 'w') as f:
+            f.write('{},{},{},{}'.format(thx, thy, thz, blx))
+    else:
+        if not os.path.exists('generated_kernels/cpu/{}/kernel_launch_config'.format('unfused' if unfused else 'fused')):
+            os.mkdir('generated_kernels/cpu/{}/kernel_launch_config'.format('unfused' if unfused else 'fused'))
+        if unfused:
+            vlen_ic, vlen_oc = -1, -1
+            for e in config_dict['entity']:
+                if e[0] == 'tile_ic':
+                    vlen_ic = e[2][-1]
+                if e[0] == 'tile_oc':
+                    vlen_oc = e[2][-1]
+            assert vlen_ic != -1 and vlen_oc != -1
+            with open('generated_kernels/cpu/unfused/kernel_launch_config/{}_config.csv'.format(workload_name), 'w') as f:
+                f.write('{},{}'.format(vlen_ic, vlen_oc))
+        else:
+            vlens = get_CPU_vlen_from_config(best_config, 'all')
+            vlens = [str(v) for v in vlens]
+            with open('generated_kernels/cpu/fused/kernel_launch_config/{}_config.csv'.format(workload_name), 'w') as f:
+                f.write(','.join(vlens))
+
+
+def get_CPU_vlen_from_config(best_config=None, cfg_key=''):
+    from tvm.autotvm.task.space import FallbackConfigEntity
+    if best_config is None or isinstance(best_config, FallbackConfigEntity):
+        return 16
+    config_dict = best_config.to_json_dict()
+    if cfg_key != 'all':
+        for e in config_dict['entity']:
+            if e[0] == cfg_key:
+                return int(e[2])
+    else: # Get all vlens, sort by keys and return values
+        vlens_dict = {}
+        for e in config_dict['entity']:
+            if 'vlen' in e[0]:
+                vlens_dict[e[0]] = int(e[2])
+        vlens = []
+        for k in sorted (vlens_dict.keys()):
+            vlens.append(vlens_dict[k])
+        return vlens
+
+
+def get_fusion_parameters_from_fused_conv2d_attrs(attrs, inputs):
+    import re
+    _NCHWc_matcher = re.compile("^NCHW[0-9]+c$")
+    param = []
+
+    num_layers = attrs.num_layers
+    for l in range(num_layers):
+        layout = attrs.data_layout_array[l]
+        if l == 0:
+            if layout == 'NHWC':
+                param.append(inputs[0].shape[0])
+                param.append(inputs[0].shape[1])
+                param.append(inputs[0].shape[2])
+                param.append(inputs[0].shape[3])
+            elif layout == 'NCHW':
+                param.append(inputs[0].shape[0])
+                param.append(inputs[0].shape[2])
+                param.append(inputs[0].shape[3])
+                param.append(inputs[0].shape[1])
+            elif _NCHWc_matcher.match(layout):
+                param.append(inputs[0].shape[0])
+                param.append(inputs[0].shape[2])
+                param.append(inputs[0].shape[3])
+                param.append(inputs[0].shape[1] * inputs[0].shape[4])
+            else:
+                raise Exception("Layout {} is not supported!".format(layout))
+        param.append(attrs.kernel_size_array[l][0])
+        param.append(attrs.channels_array[l] // attrs.groups_array[l])
+        param.append(attrs.strides_array[l][0])
+        param.append(bool(attrs.groups_array[l] > 1))
+        param.append(attrs.post_op_array[l])
+    param.append(False)
+
+    return param
+
+
+def get_FLOP(p):
+    layers = get_4D_shapes_from_params(p)
+    flop = 0
+    for l in range(len(layers)):
+        fcfg = layers[l][1]
+        ocfg = layers[l+1][0]
+
+        if fcfg.depthwise:
+            flop += 2 * (ocfg.N * ocfg.H * ocfg.W * ocfg.C) * (fcfg.H * fcfg.W)
+        else:
+            flop += 2 * (ocfg.N * ocfg.H * ocfg.W * ocfg.C) * (fcfg.H * fcfg.W * fcfg.I)
+
+        if fcfg.post_op:
+            flop += 2 * (ocfg.N * ocfg.H * ocfg.W * ocfg.C)
+    return flop
+
+
+def get_theoretical_mem_bytes(p):
+    layers = get_4D_shapes_from_params(p)
+    mem = 0
+    for l in range(len(layers)):
+        icfg = layers[l][0]
+        fcfg = layers[l][1]
+        ocfg = layers[l+1][0]
+
+        mem += 4 * (fcfg.H * fcfg.W * fcfg.I * fcfg.O)
+        if l == 0:
+            mem += 4 * (icfg.N * icfg.H * icfg.W * icfg.C)
+        elif l == len(layers) - 1:
+            mem += 4 * (ocfg.N * ocfg.H * ocfg.W * ocfg.C)
+        if fcfg.post_op:
+            mem += 4 * ocfg.C
+    return mem
+
+
+def get_stages_and_cfgs(s, outs):
+    stage_dict = {}
+    layer_output_dict = {}
+    param_dict = {}
+    def get_tensors(outs):
+        def traverse(prev_tensor, tensors):
+            for t in tensors:
+                op = t.op
+                name = op.name
+                prev_op_name = prev_tensor.op.name if prev_tensor is not None else None
+                if op not in s.outputs and (prev_op_name == 'T_add' or prev_op_name == 'T_relu') and isinstance(op, te.ComputeOp):
+                    s[op].compute_inline()
+                if 'PaddedInput' in name:
+                    stage_dict[name] = t
+                elif 'BiasAdd' in name or 'ReLU' in name or 'ReLU6' in name or 'Sigmoid' in name:
+                    n, i = name.split('_')
+                    stage_dict['Output_{}_{}'.format(i, n)] = t
+                elif 'Bias' in name or 'Filter' in name:
+                    param_dict[name] = t
+                elif 'Conv2dOutput' in name:
+                    _, i = name.split('_')
+                    stage_dict['Output_{}'.format(i)] = t
+                elif 'Input' in name:
+                    if 'PaddedInput_0' not in stage_dict.keys():
+                        stage_dict[name] = t
+                elif 'placeholder' in name:
+                    i = prev_op_name.split('_')[-1]
+                    if 'Conv2d' in prev_op_name: # Filter
+                        param_dict['Filter_{}'.format(i)] = t
+                    elif 'BiasAdd' in prev_op_name: # Bias
+                        param_dict['{}_{}'.format('Bias', i)] = t
+                    else:
+                        continue
+                elif 'T_add' in name or 'T_relu' in name: # Handle it later in the outside function
+                    pass
+                else:
+                    raise Exception("Unknown tensor type: {}!".format(name))
+                traverse(t, op.input_tensors)
+
+        outs = [outs] if isinstance(outs, te.tensor.Tensor) else outs
+        traverse(None, outs)
+
+    get_tensors(outs)
+    layer_num = 0
+    post_ops = []
+    padded = []
+    while 1:
+        if 'Output_{}'.format(layer_num) not in stage_dict.keys():
+            break
+        layer_num += 1
+    for idx in range(layer_num):
+        if 'Output_{}_ReLU6'.format(idx) in stage_dict.keys():
+            post_ops.append('relu6')
+            layer_output_dict['Layer_{}'.format(idx)] = stage_dict['Output_{}_ReLU6'.format(idx)]
+        elif 'Output_{}_ReLU'.format(idx) in stage_dict.keys():
+            post_ops.append('relu')
+            layer_output_dict['Layer_{}'.format(idx)] = stage_dict['Output_{}_ReLU'.format(idx)]
+        elif 'Output_{}_Sigmoid'.format(idx) in stage_dict.keys():
+            post_ops.append('sigmoid')
+            layer_output_dict['Layer_{}'.format(idx)] = stage_dict['Output_{}_Sigmoid'.format(idx)]
+        elif 'Output_{}_BiasAdd'.format(idx) in stage_dict.keys():
+            post_ops.append('bias')
+            layer_output_dict['Layer_{}'.format(idx)] = stage_dict['Output_{}_BiasAdd'.format(idx)]
+        else:
+            post_ops.append(None)
+            layer_output_dict['Layer_{}'.format(idx)] = stage_dict['Output_{}'.format(idx)]
+
+        if 'PaddedInput_{}'.format(idx) in stage_dict.keys():
+            padded.append(True)
+        else:
+            padded.append(False)
+
+    # The final output is some extra add or relu
+    if 'T_add' in outs[0].op.name or 'T_relu' in outs[0].op.name:
+        layer_output_dict['Layer_{}'.format(layer_num-1)] = outs[0]
+
+    return stage_dict, layer_output_dict, param_dict, layer_num, post_ops, padded
