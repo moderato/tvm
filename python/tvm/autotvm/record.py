@@ -303,6 +303,55 @@ def pick_best(in_file, out_file):
             best_set.remove(measure_str_key(inp))
 
 
+def pick_best_batch(in_file, batch=100):
+    if os.path.isfile(in_file):
+        in_file = [in_file]
+    elif os.path.isdir(in_file):
+        tmp = []
+        for f in os.listdir(in_file):
+            if f.endswith('.log'):
+                tmp.append(os.path.join(in_file, f))
+        in_file = tmp
+    else:
+        raise Exception('')
+
+    picked = []
+    for f in in_file:
+        records = load_from_file(f)
+        d = {}
+        for k, v in records:
+            d[k] = v
+        sorted_records = sorted(
+            d.items(), key=lambda item: item[1].costs[0]
+        )
+        for i in range(min(batch, len(sorted_records))):
+            picked.append(sorted_records[i])
+
+    return picked
+
+
+def pick_best_batch_and_write(in_file, out_file, batch=100, append=False):
+    """
+    Pick the best entries from a file and store them to another file.
+
+    Parameters
+    ----------
+    in_file: str
+        The filename of input
+    out_file: str or file
+        The filename of output
+    batch: int
+        The number of entries to be extracted
+    """
+    from tvm.topi.fusion_composer import FusionComposer # Needed as tasks should be registered. TODO: Integrate fusion_composer into TOPI and remove this line.
+    picked = pick_best_batch(in_file, batch)
+
+    write_mode = 'a' if append else 'w'
+    with open(out_file, write_mode) as f:
+        for (k, v) in picked:
+            f.write(encode(k, v) + '\n')
+
+
 """
 Usage:
 This record executable module has three modes.
@@ -313,14 +362,19 @@ e.g. python -m tvm.autotvm.record --mode read --i collect_conv.log --begin 0 --e
 * Extract history best from a large log file
 e.g. python -m tvm.autotvm.record --mode pick --i collect.log
 
+* Extract a history best batch from a large log file and write to a new log file
+e.g. python -m tvm.autotvm.record --mode pick_batch --batch_size 200 --append --i collect.log --o best_batch.log
+
 * Split a log file into separate files, each of which contains only a single wkl
 e.g. python -m tvm.autotvm.record --mode split --i collect.log
 """
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["read", "pick", "split"], default="read")
+    parser.add_argument("--mode", choices=["read", "pick", "split", "pick_batch"], default="read")
     parser.add_argument("--i", type=str, help="input file")
     parser.add_argument("--o", type=str, default=None, help="output file")
+    parser.add_argument("--batch_size", type=int, default=100, help="number of best entries to be extracted")
+    parser.add_argument("--append", action="store_true")
     parser.add_argument("--begin", type=int, default=0)
     parser.add_argument("--end", type=int, default=5)
     parser.add_argument("--ir", action="store_true")
@@ -352,3 +406,5 @@ if __name__ == "__main__":
                         print(func.imported_modules[0].get_source())
     elif args.mode == "split":
         split_workload(args.i)
+    elif args.mode == "pick_batch":
+        pick_best_batch_and_write(args.i, args.o, args.batch_size, args.append)
