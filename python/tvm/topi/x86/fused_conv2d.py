@@ -33,26 +33,26 @@ logger = logging.getLogger("topi")
 def _fused_conv2d_infer_layout(workload, cfg):
     if cfg.is_fallback:
         raise Exception("Don't accept FallBack config")
-
     layers = get_4D_shapes_from_params(workload[1])
     num_layers = len(layers) - 1
 
-    # Input
-    first_feature, first_filter = layers[0]
-    if first_filter.depthwise:
-        vlen_i = cfg['vlen_conv_0'].val
-    else:
-        vlen_i = cfg['vlen_input'].val
-    first_feature.update_shape(vlen_i)
-    in_layout = "NCHW%dc" % vlen_i
-    in_shape = first_feature.shape
-
-    # Output
-    output, = layers[-1]
-    vlen_o = cfg['vlen_conv_{}'.format(num_layers-1)].val
-    output.update_shape(vlen_o)
-    out_layout = "NCHW%dc" % vlen_o
-    out_shape = output.shape
+    conv_count = 0
+    for idx, layer in enumerate(layers[0:num_layers]): # Last element is the output tensor
+        feature, filter = layer
+        if idx == 0:
+            # Input
+            vlen_i = cfg['vlen_input'].val
+            feature.update_shape(vlen_i)
+            in_layout = "NCHW%dc" % vlen_i
+            in_shape = feature.shape
+        elif idx == num_layers-1:
+            # Output
+            vlen_o = cfg['vlen_conv_{}'.format(conv_count)].val
+            feature.update_shape(vlen_o)
+            out_layout = "NCHW%dc" % vlen_o
+            out_shape = feature.shape
+        if not filter.depthwise:
+            conv_count += 1
 
     return ((in_shape, in_layout),), ((out_shape, out_layout),)
 
