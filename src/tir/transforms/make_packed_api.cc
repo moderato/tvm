@@ -20,7 +20,6 @@
 /*!
  * \file make_packed_api.cc Lower PrimFunc to use the packed function API.
  */
-#include <tvm/runtime/container.h>
 #include <tvm/runtime/device_api.h>
 #include <tvm/runtime/registry.h>
 #include <tvm/target/target.h>
@@ -40,6 +39,67 @@
 
 namespace tvm {
 namespace tir {
+
+class ReturnRewriter : public StmtMutator {
+ public:
+  explicit ReturnRewriter(Var ret_var, Var ret_tcode) : ret_var_(ret_var), ret_tcode_(ret_tcode) {}
+
+  Stmt VisitStmt_(const ForNode* node) override {
+    if (node->kind == ForKind::kParallel) in_parallel_ += 1;
+    Stmt ret = StmtMutator::VisitStmt_(node);
+    if (node->kind == ForKind::kParallel) in_parallel_ -= 1;
+    return ret;
+  }
+
+  Stmt VisitStmt_(const EvaluateNode* node) override {
+    Stmt ret = StmtMutator::VisitStmt_(node);
+    const EvaluateNode* eval = ret.as<EvaluateNode>();
+    ICHECK(eval);
+    if (const CallNode* call = eval->value.as<CallNode>()) {
+      if (call->op.same_as(builtin::ret())) {
+        ICHECK_EQ(in_parallel_, 0) << "tir.ret cannot be used in parallel scope.";
+        ICHECK_EQ(call->args.size(), 1) << "tir.ret expect a single argument.";
+        ret = WriteToOut(call->args[0], ret_var_, ret_tcode_);
+      }
+    }
+    return ret;
+  }
+
+ private:
+  std::pair<int, PrimExpr> ConvertForFFI(PrimExpr val) {
+    // convert val's data type to FFI data type, return type code
+    DataType dtype = val.dtype();
+    if (dtype.is_int() || dtype.is_uint()) {
+      return {kTVMArgInt, Cast(DataType::Int(64), val)};
+    } else if (dtype.is_float()) {
+      return {kTVMArgFloat, Cast(DataType::Float(64), val)};
+    } else if (dtype.is_void()) {
+      return {kTVMNullptr, val};
+    } else {
+      LOG(FATAL) << "data type " << dtype << " not supported yet";
+    }
+    return {kTVMNullptr, val};
+  }
+
+  Stmt WriteToOut(PrimExpr val, Var ret_var, Var ret_tcode) {
+    auto p = ConvertForFFI(val);
+    int tcode = p.first;
+    val = p.second;
+    Stmt store_val = Store(ret_var_, val, 0, const_true());
+    Stmt store_tcode = Store(ret_tcode_, tcode, 0, const_true());
+    Stmt ret_zero = Evaluate(tvm::ret(0));
+    return SeqStmt({store_val, store_tcode, ret_zero});
+  }
+
+  Var ret_var_;
+  Var ret_tcode_;
+  int in_parallel_{0};
+};
+
+Stmt RewriteReturn(Stmt body, Var ret_var, Var ret_tcode) {
+  ReturnRewriter rewriter(ret_var, ret_tcode);
+  return rewriter(body);
+}
 
 inline Stmt MakeAssertEQ(PrimExpr lhs, PrimExpr rhs, std::string msg) {
   return AssertStmt(lhs == rhs, tvm::tir::StringImm(msg), Evaluate(0));
@@ -168,7 +228,7 @@ PrimFunc MakePackedAPI(PrimFunc&& func, int num_unpacked_args) {
   //
   // For example, for auto broadcasting, checks are required to guarantee that
   // either 0 or the original stride will be correctly used. Checks here have
-  // to use the args that may have no let bining yet. Therefore, hoisting let
+  // to use the args that may have no let binding yet. Therefore, hoisting let
   // binding for args before buffer declaration is needed.
   for (const auto& kv : var_def) {
     binder.Bind(kv.second, kv.first, kv.first->name_hint, true);
@@ -182,15 +242,16 @@ PrimFunc MakePackedAPI(PrimFunc&& func, int num_unpacked_args) {
     func = WithAttr(std::move(func), tvm::attr::kCallingConv, Integer(CallingConv::kCPackedFunc));
   }
 
-  Stmt body = AttrStmt(make_zero(DataType::Int(32)), attr::compute_scope,
-                       StringImm(name_hint + "_compute_"), func_ptr->body);
+  Stmt body = RewriteReturn(func_ptr->body, v_out_ret_value, v_out_ret_tcode);
+  body = AttrStmt(make_zero(DataType::Int(32)), attr::compute_scope,
+                  StringImm(name_hint + "_compute_"), body);
   // Set device context
   if (vmap.count(device_id.get())) {
     PrimExpr node = StringImm("default");
-    seq_check.push_back(AttrStmt(node, attr::device_context_id, device_id, nop));
-    seq_check.push_back(AttrStmt(node, attr::device_context_type, device_type, nop));
+    seq_check.push_back(AttrStmt(node, attr::device_id, device_id, nop));
+    seq_check.push_back(AttrStmt(node, attr::device_type, device_type, nop));
 
-    if (runtime::DeviceAPI::NeedSetDeviceContext(target_device_type)) {
+    if (runtime::DeviceAPI::NeedSetDevice(target_device_type)) {
       Stmt set_device =
           Evaluate(Call(DataType::Int(32), builtin::tvm_call_packed(),
                         {StringImm(runtime::symbol::tvm_set_device), device_type, device_id}));

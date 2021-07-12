@@ -198,7 +198,7 @@ def decl_buffer(
 
     Returns
     -------
-    buffer : Buffer
+    buffer : tvm.tir.Buffer
         The created buffer
 
     Example
@@ -217,12 +217,12 @@ def decl_buffer(
         Bb = tvm.tir.decl_buffer(B.shape, B.dtype, name="Bb", buffer_type="auto_broadcast")
         s = te.create_schedule(C.op)
         fadd = tvm.build(s, [A, B, C], target='llvm', name='bcast_add', binds={A:Ab, B:Bb})
-        ctx = tvm.cpu(0)
-        a = tvm.nd.array(np.random.uniform(size=(2, 4, 3)).astype(A.dtype), ctx)
-        b = tvm.nd.array(np.random.uniform(size=(2, 1, 3)).astype(B.dtype), ctx)
-        c = tvm.nd.array(np.zeros((2, 4, 3), dtype=C.dtype), ctx)
+        dev = tvm.cpu(0)
+        a = tvm.nd.array(np.random.uniform(size=(2, 4, 3)).astype(A.dtype), dev)
+        b = tvm.nd.array(np.random.uniform(size=(2, 1, 3)).astype(B.dtype), dev)
+        c = tvm.nd.array(np.zeros((2, 4, 3), dtype=C.dtype), dev)
         fadd(a, b, c)
-        tvm.testing.assert_allclose(c.asnumpy(), a.asnumpy() + b.asnumpy())
+        tvm.testing.assert_allclose(c.numpy(), a.numpy() + b.numpy())
 
     Note
     ----
@@ -247,7 +247,10 @@ def decl_buffer(
         shape_dtype = shape[0].dtype if hasattr(shape[0], "dtype") else "int32"
         elem_offset = Var("%s_elem_offset" % name, shape_dtype)
     if data is None:
-        data = Var(name, PointerType(PrimType(dtype)), span)
+        # Bool is represented as uint1 in the IR, but stored as int8
+        storage_type = PrimType(dtype)
+        storage_type = PrimType("int8") if storage_type.dtype == "bool" else storage_type
+        data = Var(name, PointerType(storage_type), span)
     return _ffi_api.Buffer(
         data,
         dtype,

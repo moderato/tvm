@@ -69,6 +69,11 @@ class BiasAddAttrs(Attrs):
     """Atttribute of nn.bias_add"""
 
 
+@tvm._ffi.register_object("relay.attrs.MatmulAttrs")
+class MatmulAttrs(Attrs):
+    """Attributes for nn.matmul"""
+
+
 @tvm._ffi.register_object("relay.attrs.DenseAttrs")
 class DenseAttrs(Attrs):
     """Attributes for nn.dense"""
@@ -139,9 +144,19 @@ class DeformableConv2DAttrs(Attrs):
     """Attributes for nn.deformable_conv2d"""
 
 
-@tvm._ffi.register_object("relay.attrs.ResizeAttrs")
-class ResizeAttrs(Attrs):
-    """Attributes for image.resize"""
+@tvm._ffi.register_object("relay.attrs.Resize1DAttrs")
+class Resize1DAttrs(Attrs):
+    """Attributes for image.resize1d"""
+
+
+@tvm._ffi.register_object("relay.attrs.Resize2DAttrs")
+class Resize2DAttrs(Attrs):
+    """Attributes for image.resize2d"""
+
+
+@tvm._ffi.register_object("relay.attrs.Resize3DAttrs")
+class Resize3DAttrs(Attrs):
+    """Attributes used in resize3d operators"""
 
 
 @tvm._ffi.register_object("relay.attrs.CropAndResizeAttrs")
@@ -307,6 +322,11 @@ class GetValidCountsAttrs(Attrs):
 @tvm._ffi.register_object("relay.attrs.NonMaximumSuppressionAttrs")
 class NonMaximumSuppressionAttrs(Attrs):
     """Attributes for vision.non_maximum_suppression"""
+
+
+@tvm._ffi.register_object("relay.attrs.AllClassNonMaximumSuppressionAttrs")
+class AllClassNonMaximumSuppressionAttrs(Attrs):
+    """Attributes for vision.all_classnon_maximum_suppression"""
 
 
 @tvm._ffi.register_object("relay.attrs.ROIAlignAttrs")
@@ -494,11 +514,6 @@ class RequantizeAttrs(Attrs):
     """Attributes used in requantize operators"""
 
 
-@tvm._ffi.register_object("relay.attrs.Resize3dAttrs")
-class Resize3dAttrs(Attrs):
-    """Attributes used in resize3d operators"""
-
-
 @tvm._ffi.register_object("relay.attrs.ScatterAttrs")
 class ScatterAttrs(Attrs):
     """Attributes used in scatter operators"""
@@ -534,6 +549,11 @@ class SparseTransposeAttrs(Attrs):
     """Attributes used in sparse_transpose operators"""
 
 
+@tvm._ffi.register_object("relay.attrs.SparseConv2DAttrs")
+class SparseConv2DAttrs(Attrs):
+    """Attributes used in sparse_conv2d operators"""
+
+
 @tvm._ffi.register_object("relay.attrs.TopkAttrs")
 class TopkAttrs(Attrs):
     """Attributes used in topk operators"""
@@ -557,3 +577,23 @@ class SpaceToBatchNDAttrs(Attrs):
 @tvm._ffi.register_object("relay.attrs.BatchToSpaceNDAttrs")
 class BatchToSpaceNDAttrs(Attrs):
     """Attributes used in BatchToSpaceNDAttrs operators"""
+
+
+@tvm._ffi.register_object("relay.attrs.ThreefryGenerateAttrs")
+class ThreefryGenerateAttrs(Attrs):
+    """Attributes used in ThreefryGenerateAttrs operators"""
+
+
+@tvm._ffi.register_object("relay.attrs.UniformAttrs")
+class UniformAttrs(Attrs):
+    """Attributes used in UniformAttrs operators"""
+
+
+@tvm._ffi.register_object("relay.attrs.NLLLossAttrs")
+class NLLLossAttrs(Attrs):
+    """Attributes for nn.nll_loss"""
+
+
+@tvm._ffi.register_object("relay.attrs.FixedPointMultiplyAttrs")
+class FixedPointMultiplyAttrs(Attrs):
+    """Attributes used in fixed_point_multiply operators"""

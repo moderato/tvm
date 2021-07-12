@@ -64,8 +64,9 @@ bool ReshapeRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
     return false;
   }
 
-  // Doesn't support dynamic output rank
-  for (int i = 0; i < newshape->shape[0].as<IntImmNode>()->value; i++) {
+  const IntImmNode* rank = newshape->shape[0].as<IntImmNode>();
+  ICHECK(rank != nullptr) << "Dynamic Reshape doesn't support Dynamic Rank";
+  for (int i = 0; i < rank->value; i++) {
     oshape.push_back(Any());
   }
 
@@ -90,7 +91,6 @@ Array<te::Tensor> ReshapeCompute(const Attrs& attrs, const Array<te::Tensor>& in
 
 Expr MakeReshape(Expr data, Expr newshape) {
   auto attrs = make_object<ReshapeAttrs>();
-  attrs->reverse = false;
   static const Op& op = Op::Get("dyn.reshape");
   return Call(op, {data, newshape}, Attrs(attrs), {});
 }
@@ -141,7 +141,8 @@ RELAY_REGISTER_OP("dyn.reshape")
     .set_support_level(3)
     .add_type_rel("DynamicReshape", ReshapeRel)
     .set_attr<FTVMCompute>("FTVMCompute", ReshapeCompute)
-    .set_attr<TOpPattern>("TOpPattern", kInjective);
+    .set_attr<TOpPattern>("TOpPattern", kInjective)
+    .set_attr<TReshapeOp>("TReshapeOp", true);
 
 // tile operator
 // TVM_REGISTER_NODE_TYPE(TileAttrs);
@@ -401,6 +402,9 @@ bool FullRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
   if (fill_value == nullptr) {
     return false;
   }
+  if (fill_shape == nullptr) {
+    return false;
+  }
 
   DataType out_dtype = param->dtype;
   if (out_dtype.bits() == 0) {
@@ -462,10 +466,18 @@ bool StridedSliceRel(const Array<Type>& types, int num_inputs, const Attrs& attr
   auto dshape = data->shape;
   int64_t num_axis = dshape.size();
 
+  const auto* begin = types[1].as<TensorTypeNode>();
+  ICHECK(begin);
+
   // calculate output shape
   std::vector<IndexExpr> oshape(num_axis);
-  for (int64_t i = 0; i < num_axis; ++i) {
+  int64_t num_dynamic_axes = begin->shape[0].as<IntImmNode>()->value;
+  for (int64_t i = 0; i < num_dynamic_axes; ++i) {
     oshape[i] = Any();
+  }
+
+  for (int64_t i = num_dynamic_axes; i < num_axis; ++i) {
+    oshape[i] = dshape[i];
   }
 
   reporter->Assign(types[4], TensorType(oshape, data->dtype));
@@ -480,11 +492,12 @@ Array<te::Tensor> StridedSliceCompute(const Attrs& attrs, const Array<te::Tensor
   te::Tensor strides = inputs[3];
   // Dynamic computation
   int64_t data_rank = data->shape.size();
-  ICHECK(begin->shape[0].as<IntImmNode>()->value == data_rank &&
-         end->shape[0].as<IntImmNode>()->value == data_rank &&
-         strides->shape[0].as<IntImmNode>()->value == data_rank)
-      << "begin, end, and strides are required to have the same length"
-      << " if they are dynamic variables.";
+  int64_t num_dynamic_axes = begin->shape[0].as<IntImmNode>()->value;
+  ICHECK(end->shape[0].as<IntImmNode>()->value == num_dynamic_axes &&
+         strides->shape[0].as<IntImmNode>()->value == num_dynamic_axes)
+      << "begin, end, strides should have the same length if they are dynamic variables";
+  ICHECK(num_dynamic_axes <= data_rank)
+      << "the number of dynamic axes to slice should be less than or equal to the data rank";
   return Array<te::Tensor>{topi::dynamic_strided_slice(data, begin, end, strides)};
 }
 

@@ -224,14 +224,15 @@ class ThreadAllreduceBuilder final : public StmtExprMutator {
       PrimExpr index(0);
 
       for (size_t idx = 0; idx < size; ++idx) {
-        shared_bufs[idx] = Var("red_buf" + std::to_string(idx), DataType::Handle());
+        Type ptr_type = PointerType(PrimType(types[idx]));
+        shared_bufs[idx] = Var("red_buf" + std::to_string(idx), ptr_type);
         PrimExpr pred = const_true(types[idx].lanes());
         seq.emplace_back(Store(shared_bufs[idx], values[idx], index, pred));
 
         // Uses a local variable to store the shuffled data.
         // Later on, this allocation will be properly attached to this statement.
-        Var var("t" + std::to_string(idx), types[idx]);
-        Stmt s = Allocate(var, var.dtype(), {PrimExpr(1)}, pred, Evaluate(0));
+        Var var("t" + std::to_string(idx), ptr_type);
+        Stmt s = Allocate(var, types[idx], {PrimExpr(1)}, pred, Evaluate(0));
         local_vars.push_back(s);
       }
 
@@ -239,14 +240,15 @@ class ThreadAllreduceBuilder final : public StmtExprMutator {
       // a divergent control flow. Here it uses a variable to cache the current
       // active channels.
       //
-      Var mask_var("mask", DataType::UInt(32));
+      DataType mask_dtype = DataType::UInt(32);
+      Var mask_var("mask", PointerType(PrimType(mask_dtype)));
       {
         PrimExpr pred = const_true(1);
-        PrimExpr mask = Call(DataType::UInt(32), builtin::tvm_warp_activemask(), {});
+        PrimExpr mask = Call(mask_dtype, builtin::tvm_warp_activemask(), {});
         seq.emplace_back(Store(mask_var, mask, index, pred));
         // Push allocation with an empty body. Later this will be fixed
         // when the entire body is ready.
-        auto stmt = Allocate(mask_var, mask_var->dtype, {PrimExpr(1)}, pred, Evaluate(0));
+        auto stmt = Allocate(mask_var, mask_dtype, {PrimExpr(1)}, pred, Evaluate(0));
         local_vars.push_back(stmt);
       }
 
@@ -338,7 +340,7 @@ class ThreadAllreduceBuilder final : public StmtExprMutator {
       // previous iteration on the same buffer.
       seq.emplace_back(SyncThread("shared"));
       for (size_t idx = 0; idx < size; ++idx) {
-        shared_bufs[idx] = Var("red_buf" + std::to_string(idx), DataType::Handle());
+        shared_bufs[idx] = Var("red_buf" + std::to_string(idx), PointerType(PrimType(types[idx])));
         PrimExpr pred = const_true(types[idx].lanes());
         seq.emplace_back(Store(shared_bufs[idx], values[idx],
                                BufIndex(reduce_index, group_index, reduce_extent), pred));
@@ -386,7 +388,7 @@ class ThreadAllreduceBuilder final : public StmtExprMutator {
     size_t size = shared_bufs.size();
     PrimExpr buf_index = BufIndex(reduce_index, group_index, reduce_extent);
     // make reduction
-    auto freduce = [&](int offset) {
+    auto fload = [&](int offset) {
       Array<PrimExpr> a, b;
       for (size_t i = 0; i < size; ++i) {
         b.push_back(Load(types[i], shared_bufs[i],
@@ -395,11 +397,18 @@ class ThreadAllreduceBuilder final : public StmtExprMutator {
         a.push_back(Load(types[i], shared_bufs[i], buf_index, const_true()));
       }
       Array<PrimExpr> ret = (*combiner)(a, b);
+      return ret;
+    };
+    auto fstore = [&](const Array<PrimExpr>& ret) {
       std::vector<Stmt> stores(size);
       for (size_t i = 0; i < size; ++i) {
         stores[i] = Store(shared_bufs[i], ret[i], buf_index, const_true());
       }
       return SeqStmt::Flatten(stores);
+    };
+    auto freduce = [&](int offset) {
+      auto ret = fload(offset);
+      return fstore(ret);
     };
     // Step one, check for
     if (reduce_align > reduce_extent) {
@@ -418,15 +427,47 @@ class ThreadAllreduceBuilder final : public StmtExprMutator {
       seq.emplace_back(SyncThread("shared"));
     }
     // in warp synchronization.
-    std::vector<Stmt> in_warp_seq;
-    PrimExpr in_warp_cond = reduce_index < (reduce_align >> 1);
-    while (reduce_align > 1) {
-      reduce_align = reduce_align >> 1;
-      in_warp_seq.emplace_back(freduce(reduce_align));
-      seq.emplace_back(SyncThread("warp"));
-    }
-    if (in_warp_seq.size() != 0) {
+    if (reduce_align > 1) {
+      PrimExpr in_warp_cond = reduce_index < (reduce_align >> 1);
+
+      std::vector<Stmt> in_warp_seq;
+
+      while (reduce_align > 1) {
+        reduce_align = reduce_align >> 1;
+
+        // freduce can read/write to the same memory location.  For
+        // example, with reduce_align of 4, threadIdx 3 reads from
+        // memory location 7 as threadIdx 7 is writing to it.
+        // Therefore, we need to separate out the load from the store
+        // with a memory barrier in-between.  This isn't necessary for
+        // the earlier normal synchronization, because those are each
+        // protected by an if-statement.  The if-statement is avoided
+        // here to reduce thread divergence.
+        auto loads = fload(reduce_align);
+
+        Array<Var> in_warp_local_vars;
+        for (auto expr : loads) {
+          Var var(
+              "w_" + std::to_string(reduce_align) + "_" + std::to_string(in_warp_local_vars.size()),
+              expr->dtype);
+          in_warp_local_vars.push_back(var);
+        }
+
+        std::vector<Stmt> in_let_statement;
+        in_let_statement.emplace_back(SyncThread("warp"));
+        in_let_statement.emplace_back(
+            fstore({in_warp_local_vars.begin(), in_warp_local_vars.end()}));
+        in_let_statement.emplace_back(SyncThread("warp"));
+
+        Stmt body = SeqStmt::Flatten(in_let_statement);
+        for (size_t i = 0; i < size; i++) {
+          body = LetStmt(in_warp_local_vars[i], loads[i], body);
+        }
+        in_warp_seq.push_back(body);
+      }
+
       Stmt warp_body = SeqStmt::Flatten(in_warp_seq);
+
       seq.emplace_back(IfThenElse(in_warp_cond, warp_body));
       seq.emplace_back(SyncThread("shared"));
     }

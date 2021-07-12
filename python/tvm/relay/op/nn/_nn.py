@@ -42,14 +42,77 @@ reg.register_strategy("nn.softmax", strategy.softmax_strategy)
 reg.register_pattern("nn.softmax", OpPattern.OPAQUE)
 
 
+# fast softmax
+reg.register_strategy("nn.fast_softmax", strategy.fast_softmax_strategy)
+reg.register_pattern("nn.fast_softmax", OpPattern.OPAQUE)
+
+
 # log_softmax
-reg.register_schedule("nn.log_softmax", strategy.schedule_log_softmax)
+reg.register_strategy("nn.log_softmax", strategy.log_softmax_strategy)
 reg.register_pattern("nn.log_softmax", OpPattern.OPAQUE)
+
+
+@reg.register_legalize("nn.matmul")
+def legalize_matmul(attrs, inputs, types):
+    """Legalize matmul op.
+
+    Parameters
+    ----------
+    attrs : tvm.ir.Attrs
+        Attributes of current matmul
+    inputs : list of tvm.relay.Expr
+        The args of the Relay expr to be legalized
+    types : list of types
+        List of input and output types
+
+    Returns
+    -------
+    result : tvm.relay.Expr
+        The legalized expr
+    """
+    return topi.nn.matmul_legalize(attrs, inputs, types)
+
+
+# matmul
+reg.register_strategy("nn.matmul", strategy.matmul_strategy)
+reg.register_pattern("nn.matmul", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+
+
+@reg.register_legalize("nn.dense")
+def legalize_dense(attrs, inputs, types):
+    """Legalize dense op.
+
+    Parameters
+    ----------
+    attrs : tvm.ir.Attrs
+        Attributes of current convolution
+    inputs : list of tvm.relay.Expr
+        The args of the Relay expr to be legalized
+    types : list of types
+        List of input and output types
+
+    Returns
+    -------
+    result : tvm.relay.Expr
+        The legalized expr
+    """
+    return topi.nn.dense_legalize(attrs, inputs, types)
 
 
 # dense
 reg.register_strategy("nn.dense", strategy.dense_strategy)
 reg.register_pattern("nn.dense", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+
+
+@reg.register_alter_op_layout("nn.dense")
+def alter_op_layout_dense(attrs, inputs, tinfos, out_type):
+    """Alternate the layout of dense"""
+    return topi.nn.dense_alter_layout(attrs, inputs, tinfos, out_type)
+
+
+# dense_pack
+reg.register_strategy("nn.contrib_dense_pack", strategy.dense_pack_strategy)
+reg.register_pattern("nn.contrib_dense_pack", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 
 
 # fifo_buffer
@@ -60,6 +123,27 @@ def compute_fifo_buffer(attrs, inputs, out_type):
 
 reg.register_injective_schedule("nn.fifo_buffer")
 reg.register_pattern("nn.fifo_buffer", OpPattern.OPAQUE)
+
+
+@reg.register_legalize("nn.batch_matmul")
+def legalize_batch_matmul(attrs, inputs, types):
+    """Legalize batch_matmul op.
+
+    Parameters
+    ----------
+    attrs : tvm.ir.Attrs
+        Attributes of current convolution
+    inputs : list of tvm.relay.Expr
+        The args of the Relay expr to be legalized
+    types : list of types
+        List of input and output types
+
+    Returns
+    -------
+    result : tvm.relay.Expr
+        The legalized expr
+    """
+    return topi.nn.batch_matmul_legalize(attrs, inputs, types)
 
 
 # batch_matmul
@@ -84,6 +168,11 @@ def alter_op_layout_sparse_dense(attrs, inputs, tinfos, out_type):
     return topi.nn.sparse_dense_alter_layout(attrs, inputs, tinfos, out_type)
 
 
+# sparse_add
+reg.register_strategy("nn.sparse_add", strategy.sparse_add_strategy)
+reg.register_pattern("nn.sparse_add", reg.OpPattern.OPAQUE)
+
+
 @reg.register_compute("nn.internal.sparse_dense_padded")
 def compute_sparse_dense_padded(attrs, inputs, out_type):
     """Compute definition of sparse_dense_padded"""
@@ -103,6 +192,17 @@ def compute_sparse_transpose(attrs, inputs, out_type):
 
 reg.register_schedule("nn.sparse_transpose", strategy.schedule_sparse_transpose)
 reg.register_pattern("nn.sparse_transpose", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+
+
+# sparse_conv2d
+@reg.register_compute("nn.sparse_conv2d")
+def compute_sparse_conv2d(attrs, inputs, out_type):
+    """Compute definition of sparse_conv2d"""
+    return [topi.nn.sparse_conv2d(inputs[0], inputs[1], inputs[2], inputs[3], attrs["layout"])]
+
+
+reg.register_strategy("nn.sparse_conv2d", strategy.sparse_conv2d_strategy)
+reg.register_pattern("nn.sparse_conv2d", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 
 
 # conv1d
@@ -511,6 +611,16 @@ reg.register_schedule("nn.avg_pool2d_grad", strategy.schedule_pool_grad)
 reg.register_pattern("nn.avg_pool2d_grad", OpPattern.OUT_ELEMWISE_FUSABLE)
 
 
+# adaptive_max_pool1d
+reg.register_schedule("nn.adaptive_max_pool1d", strategy.schedule_adaptive_pool)
+reg.register_pattern("nn.adaptive_max_pool1d", OpPattern.OUT_ELEMWISE_FUSABLE)
+
+
+# adaptive_avg_pool1d
+reg.register_schedule("nn.adaptive_avg_pool1d", strategy.schedule_adaptive_pool)
+reg.register_pattern("nn.adaptive_avg_pool1d", OpPattern.OUT_ELEMWISE_FUSABLE)
+
+
 # global_max_pool2d
 reg.register_schedule("nn.global_max_pool2d", strategy.schedule_adaptive_pool)
 reg.register_pattern("nn.global_max_pool2d", OpPattern.OUT_ELEMWISE_FUSABLE)
@@ -872,6 +982,17 @@ reg.register_reduce_schedule("nn.cross_entropy_with_logits")
 reg.register_pattern("nn.cross_entropy_with_logits", OpPattern.OPAQUE)
 
 
+# nll_loss
+@reg.register_compute("nn.nll_loss")
+def compute_nll_loss(attrs, inputs, out_dtype):
+    predictions, targets, weights = inputs
+    return [topi.nn.nll_loss(predictions, targets, weights, attrs.reduction, attrs.ignore_index)]
+
+
+reg.register_reduce_schedule("nn.nll_loss")
+reg.register_pattern("nn.nll_loss", OpPattern.OUT_ELEMWISE_FUSABLE)
+
+
 # depth_to_space
 @reg.register_compute("nn.depth_to_space")
 def compute_depth_to_space(attrs, inputs, out_dtype):
@@ -1135,21 +1256,63 @@ def batch_flatten_shape_func(attrs, inputs, _):
 
 
 @script
-def _dense_shape_func(data_shape, weight_shape):
-    out = output_tensor((data_shape.shape[0],), "int64")
+def _matmul_shape_func(tensor_a_shape, tensor_b_shape, transpose_a, transpose_b):
+    out = output_tensor((tensor_a_shape.shape[0],), "int64")
     for i in const_range(out.shape[0] - 1):
-        out[i] = data_shape[i]
-    out[out.shape[0] - 1] = weight_shape[0]
+        out[i] = tensor_a_shape[i]
+    if transpose_a:
+        out[out.shape[0] - 2] = out[out.shape[0] - 1]
+    out[out.shape[0] - 1] = tensor_b_shape[0] if transpose_b else tensor_b_shape[1]
 
     return out
 
 
+@reg.register_shape_func("nn.matmul", False)
+def matmul_shape_func(attrs, inputs, _):
+    """Shape function for matmul op."""
+    ret = [
+        _matmul_shape_func(
+            inputs[0],
+            inputs[1],
+            expr.IntImm("bool", attrs.transpose_a),
+            expr.IntImm("bool", attrs.transpose_b),
+        )
+    ]
+    return ret
+
+
 @reg.register_shape_func("nn.dense", False)
 def dense_shape_func(attrs, inputs, _):
+    """Shape function for dense op. This is an alias of matmul_nt operator for data tensor in
+    non-transposed format and weight tensor in transposed format.
     """
-    Shape function for dense op.
+    ret = [
+        _matmul_shape_func(
+            inputs[0],
+            inputs[1],
+            expr.IntImm("bool", False),
+            expr.IntImm("bool", True),
+        )
+    ]
+    return ret
+
+
+@script
+def _dense_pack_shape_func(data_shape, weight_shape):
+    out = output_tensor((data_shape.shape[0],), "int64")
+    for i in const_range(out.shape[0] - 1):
+        out[i] = data_shape[i]
+    out[out.shape[0] - 1] = weight_shape[0] * weight_shape[2]
+
+    return out
+
+
+@reg.register_shape_func("nn.contrib_dense_pack", False)
+def dense_pack_shape_func(attrs, inputs, _):
     """
-    ret = [_dense_shape_func(inputs[0], inputs[1])]
+    Shape function for dense_pack op.
+    """
+    ret = [_dense_pack_shape_func(inputs[0], inputs[1])]
     return ret
 
 

@@ -245,7 +245,7 @@ class IndexedForwardGraph::Creator : private ExprVisitor {
     OpPatternKind op_pattern = kOpaque;
     if (const OpNode* opnode = call->op.as<OpNode>()) {
       auto op = GetRef<Op>(opnode);
-      if (IsDynamic(call->checked_type()) && IsDataDependant(call)) {
+      if (IsDynamic(call->checked_type()) && IsDataDependent(call)) {
         // output of a shape func can't be fed to a data-dependent shape func
         op_pattern = kOpaque;
       } else {
@@ -319,11 +319,20 @@ class IndexedForwardGraph::Creator : private ExprVisitor {
 
   void VisitExpr_(const LetNode* op) final {
     // do not fuse through let.
-    this->Update(op->var, nullptr, kOpaque);
-    this->Update(op->value, nullptr, kOpaque);
-    this->Update(op->body, nullptr, kOpaque);
-    ExprVisitor::VisitExpr_(op);
-    this->AddNode(op);
+    auto pre_visit = [this](const LetNode* op) {
+      // Rely on the Memoizer to cache pre-visit values
+      this->Update(op->var, nullptr, kOpaque);
+      this->Update(op->value, nullptr, kOpaque);
+      this->Update(op->body, nullptr, kOpaque);
+      this->VisitExpr(op->var);
+      this->VisitExpr(op->value);
+    };
+    auto post_visit = [this](const LetNode* op) {
+      this->VisitExpr(op->body);
+      this->visit_counter_[op] += 1;
+      this->AddNode(op);
+    };
+    ExpandANormalForm(op, pre_visit, post_visit);
   }
 
   void VisitExpr_(const IfNode* op) final {
@@ -801,7 +810,7 @@ std::vector<GraphPartitioner::Group*> GraphPartitioner::Partition(
   return std::move(groups_);
 }
 
-class FuseMutator : private ExprMutator {
+class FuseMutator : private MixedModeMutator {
  public:
   // Run the transform
   Expr Transform(const Expr& body, int fuse_opt_level, size_t max_fuse_depth) {
@@ -818,6 +827,8 @@ class FuseMutator : private ExprMutator {
   }
 
  private:
+  using MixedModeMutator::VisitExpr_;
+
   /*! \brief Temporary information from each group. */
   struct GroupInfo {
    public:
@@ -857,7 +868,7 @@ class FuseMutator : private ExprMutator {
   }
 
   // Transform calls.
-  Expr VisitExpr_(const CallNode* call) {
+  Expr Rewrite_(const CallNode* call, const Expr& post) {
     if (call->op.as<OpNode>()) {
       static auto fnoncomputational = Op::GetAttrMap<TNonComputational>("TNonComputational");
 
@@ -890,7 +901,7 @@ class FuseMutator : private ExprMutator {
     }
   }
 
-  Expr VisitExpr_(const TupleNode* tuple) {
+  Expr Rewrite_(const TupleNode* tuple, const Expr& post) {
     auto* ret_group = gmap_.at(tuple)->FindRoot();
     if (ret_group->root_ref == tuple) {
       return ExprMutator::VisitExpr_(tuple);
@@ -900,7 +911,7 @@ class FuseMutator : private ExprMutator {
     return Tuple(new_fields);
   }
 
-  Expr VisitExpr_(const TupleGetItemNode* tuple_get) {
+  Expr Rewrite_(const TupleGetItemNode* tuple_get, const Expr& post) {
     auto* ret_group = gmap_.at(tuple_get)->FindRoot();
     auto new_tuple = GetNewArguments({tuple_get->tuple}, ret_group)[0];
     auto new_node = TupleGetItem(new_tuple, tuple_get->index);
@@ -917,16 +928,63 @@ class FuseMutator : private ExprMutator {
     return std::move(new_node);
   }
 
+  Expr VisitExpr_(const LetNode* op) final {
+    auto pre_visit = [this](const LetNode* op) {
+      // Rely on the Memoizer to cache pre-visit values
+      this->VisitExpr(op->var);
+      this->VisitExpr(op->value);
+    };
+    auto post_visit = [this](const LetNode* op) {
+      // Rely on the Memoizer to cache pre-visit values
+      Var var = Downcast<Var>(this->VisitExpr(op->var));
+      Expr value = this->VisitExpr(op->value);
+      // Visit body and cache the op
+      Expr body = this->VisitExpr(op->body);
+      auto expr = GetRef<Expr>(op);
+      if (var.same_as(op->var) && value.same_as(op->value) && body.same_as(op->body)) {
+        this->memo_[expr] = expr;
+      } else {
+        this->memo_[expr] = Let(var, value, body);
+      }
+    };
+    ExpandANormalForm(op, pre_visit, post_visit);
+    return memo_[GetRef<Expr>(op)];
+  }
+
   Expr MakeNewFunction(GraphPartitioner::Group* group, Type ret_type, Expr body) {
-    // If the function has no call, it is not a primitive function.
-    struct HasCallVisitor : ExprVisitor {
+    // Quickly check special properties of the fused function.
+    // A pass to check if the fused op contains only reshape ops.
+    class CheckReshapeOnly : public ExprVisitor {
+     public:
+      void VisitExpr_(const CallNode* cn) final {
+        this->has_call = true;
+        static auto freshape_op = Op::GetAttrMap<TReshapeOp>("TReshapeOp");
+
+        if (!freshape_op.get(cn->op, false)) {
+          this->reshape_only = false;
+        }
+
+        if (!this->reshape_only) return;
+        ExprVisitor::VisitExpr_(cn);
+      }
+
+      void VisitExpr_(const VarNode* vn) final {
+        if (!vn->type_annotation.defined() || !vn->type_annotation->IsInstance<TensorTypeNode>()) {
+          this->reshape_only = false;
+        }
+      }
+
+      bool reshape_only = true;
       bool has_call = false;
-      void VisitExpr_(const CallNode* op) final { has_call = true; }
     } visitor;
+
     visitor(body);
     const GroupInfo& ginfo = ginfo_[group];
     auto func = Function(ginfo.params, body, ret_type, {});
     func = WithAttr(std::move(func), attr::kPrimitive, tvm::Integer(visitor.has_call));
+    if (visitor.has_call && visitor.reshape_only) {
+      func = WithAttr(std::move(func), attr::kReshapeOnly, tvm::Integer(visitor.reshape_only));
+    }
     return Call(func, ginfo.arguments, Attrs());
   }
 

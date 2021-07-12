@@ -29,6 +29,8 @@ from .op import (
     OpStrategy,
     debug,
     register_external_compiler,
+    register_fake_quantization_to_integer,
+    register_mixed_precision_conversion,
 )
 from . import strategy
 
@@ -44,6 +46,7 @@ from . import memory
 from . import image
 from . import vision
 from . import op_attrs
+from . import random
 
 
 # operator registry

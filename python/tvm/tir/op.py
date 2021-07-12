@@ -221,6 +221,22 @@ def call_llvm_pure_intrin(dtype, name, *args, span=None):
     )
 
 
+def ret(val):
+    """Create a tir return expression
+
+    Parameters
+    ----------
+    val : Expr
+        The returned tir expression, whose data type is int, float or void pointer.
+
+    Returns
+    -------
+    ret : PrimExpr
+        The return expression
+    """
+    return call_intrin(val.dtype, "tir.ret", val)
+
+
 def any(*args, span=None):
     """Create a new experssion of the union of all conditions in the arguments
 
@@ -241,14 +257,14 @@ def any(*args, span=None):
         raise ValueError("Any must take at least 1 argument")
     if len(args) == 1:
         return args[0]
-    ret = _ffi_api._OpOr(args[0], args[1], span)
+    val = _ffi_api._OpOr(args[0], args[1], span)
     for i in range(2, len(args)):
-        ret = _ffi_api._OpOr(ret, args[i], span)
-    return ret
+        val = _ffi_api._OpOr(val, args[i], span)
+    return val
 
 
 def all(*args, span=None):
-    """Create a new experssion of the intersection of all conditions in the
+    """Create a new expression of the intersection of all conditions in the
       arguments
 
     Parameters
@@ -268,10 +284,10 @@ def all(*args, span=None):
         raise ValueError("Any must take at least 1 argument")
     if len(args) == 1:
         return args[0]
-    ret = _ffi_api._OpAnd(args[0], args[1], span)
+    val = _ffi_api._OpAnd(args[0], args[1], span)
     for i in range(2, len(args)):
-        ret = _ffi_api._OpAnd(ret, args[i], span)
-    return ret
+        val = _ffi_api._OpAnd(val, args[i], span)
+    return val
 
 
 @tvm._ffi.register_func("tvm.default_trace_action")
@@ -734,6 +750,23 @@ def rsqrt(x):
         The result.
     """
     return call_intrin(x.dtype, "tir.rsqrt", x)
+
+
+def clz(x):
+    """Count leading zero bits of an integer x.
+
+    Parameters
+    ----------
+    x : PrimExpr
+        Input 32 or 64 bit integer.
+        The result is undefined if the input is 0.
+
+    Returns
+    -------
+    y : PrimExpr
+        The result.
+    """
+    return call_intrin("int32", "tir.clz", x)
 
 
 def floor(x, span=None):

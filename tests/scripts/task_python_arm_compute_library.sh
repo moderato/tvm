@@ -22,9 +22,10 @@ source tests/scripts/setup-pytest-env.sh
 
 
 # Rebuild cython
+# TODO(u99127): Enable cython tests.
 
 find . -type f -path "*.pyc" | xargs rm -f
 make cython3
 
-TVM_FFI=ctypes python3 -m pytest tests/python/contrib/test_arm_compute_lib
-
+echo "Temporarily suspended while we understand flakiness with #8117"
+#run_pytest ctypes python-arm_compute_lib tests/python/contrib/test_arm_compute_lib

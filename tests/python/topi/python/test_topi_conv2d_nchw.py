@@ -25,6 +25,8 @@ import tvm.topi.testing
 from tvm.contrib.pickle_memoize import memoize
 from tvm.topi.nn.utils import get_pad_tuple
 from tvm.topi.utils import get_const_tuple
+from tvm.topi.nn.conv2d import _get_workload
+from tvm.topi.x86.conv2d_avx_common import _fallback_schedule
 
 import tvm.testing
 
@@ -76,20 +78,31 @@ def verify_conv2d_nchw(
 
     a_np, w_np, b_np, c_np = get_ref_data()
 
-    def check_device(device):
-        ctx = tvm.context(device, 0)
-        if not tvm.testing.device_enabled(device):
-            print("Skip because %s is not enabled" % device)
-            return
-        print("Running on target: %s" % device)
+    def verify_workload_padding():
+        _, _, out_height, out_width = get_const_tuple(c_np.shape)
+        wkl = _get_workload(A, W, (stride, stride), padding, dilation, dtype)
 
-        if "cudnn" in device:
+        # check if tile_ow candidates are the factors of the right output weight.
+        cfg = autotvm.get_config()
+        _fallback_schedule(cfg, wkl)
+        ow_tile = np.prod(cfg["tile_ow"].size)
+
+        tvm.testing.assert_allclose(ow_tile, out_width)
+
+    def check_target(target):
+        dev = tvm.device(target, 0)
+        if not tvm.testing.device_enabled(target):
+            print("Skip because %s is not enabled" % target)
+            return
+        print("Running on target: %s" % target)
+
+        if "cudnn" in target:
             fcompute, fschedule = topi.cuda.conv2d_cudnn, topi.cuda.schedule_conv2d_cudnn
         else:
-            fcompute, fschedule = tvm.topi.testing.get_conv2d_nchw_implement(device)
+            fcompute, fschedule = tvm.topi.testing.get_conv2d_nchw_implement(target)
 
-        with tvm.target.Target(device):
-            if "cudnn" in device:
+        with tvm.target.Target(target):
+            if "cudnn" in target:
                 C = fcompute(
                     A, W, (stride, stride), padding, (dilation, dilation), 1, "NCHW", dtype
                 )
@@ -101,16 +114,19 @@ def verify_conv2d_nchw(
                 C = topi.nn.relu(C)
             s = fschedule([C])
 
-        a = tvm.nd.array(a_np, ctx)
-        w = tvm.nd.array(w_np, ctx)
-        b = tvm.nd.array(b_np, ctx)
+            if "llvm" in target:
+                verify_workload_padding()
 
-        c = tvm.nd.array(np.zeros(get_const_tuple(C.shape), dtype=C.dtype), ctx)
+        a = tvm.nd.array(a_np, dev)
+        w = tvm.nd.array(w_np, dev)
+        b = tvm.nd.array(b_np, dev)
+
+        c = tvm.nd.array(np.zeros(get_const_tuple(C.shape), dtype=C.dtype), dev)
         if add_bias:
             func = tvm.build(
                 s,
                 [A, W, bias, C],
-                device,
+                target,
                 name="relu_%d_%d_%d_%d_%d_%d_%d_%d"
                 % (batch, in_channel, in_size, num_filter, kernel, stride, padding_sum, dilation),
             )
@@ -119,19 +135,21 @@ def verify_conv2d_nchw(
             func = tvm.build(
                 s,
                 [A, W, C],
-                device,
+                target,
                 name="relu_%d_%d_%d_%d_%d_%d_%d_%d"
                 % (batch, in_channel, in_size, num_filter, kernel, stride, padding_sum, dilation),
             )
             func(a, w, c)
-        tvm.testing.assert_allclose(c.asnumpy(), c_np, rtol=1e-4)
+        tvm.testing.assert_allclose(c.numpy(), c_np, rtol=1e-4)
 
-    for device, ctx in tvm.testing.enabled_targets():
-        with autotvm.tophub.context(device):  # load tophub pre-tuned parameters
-            check_device(device)
+    for target, dev in tvm.testing.enabled_targets():
+        with autotvm.tophub.context(target):  # load tophub pre-tuned parameters
+            check_target(target)
 
     if use_cudnn:
-        check_device("cuda -model=unknown -libs=cudnn")
+        check_target("cuda -model=unknown -libs=cudnn")
+    if ("opencl", tvm.device("opencl")) in tvm.testing.enabled_targets():
+        check_target("opencl -device=intel_graphics")
 
 
 @tvm.testing.uses_gpu
@@ -242,6 +260,7 @@ def test_conv2d_nchw():
     verify_conv2d_nchw(1, 64, 8, 64, 5, 2, (1, 3), add_bias=True)
     verify_conv2d_nchw(1, 64, 8, 64, 3, 1, "VALID", add_bias=True, add_relu=True)
     verify_conv2d_nchw(1, 64, 8, 64, 24, 1, "SAME", add_bias=True, add_relu=True)
+    verify_conv2d_nchw(1, 32, 35, 64, 7, 2, (0, 0, 2, 2))
 
 
 if __name__ == "__main__":

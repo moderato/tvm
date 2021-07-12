@@ -69,7 +69,7 @@ def verify_reduce_map_ele(in_shape, axis, keepdims, type="sum", dtype="float32")
     else:
         raise NotImplementedError
 
-    def check_device(device, ctx):
+    def check_device(device, dev):
         print("Running on target: %s" % device)
         with tvm.target.Target(device):
             s = tvm.topi.testing.get_reduce_schedule(device)(B)
@@ -98,12 +98,12 @@ def verify_reduce_map_ele(in_shape, axis, keepdims, type="sum", dtype="float32")
             out_npy = _my_npy_argmin(in_npy_map, axis=axis, keepdims=keepdims)
         else:
             raise NotImplementedError
-        data_tvm = tvm.nd.array(in_npy, ctx=ctx)
-        out_tvm = tvm.nd.empty(shape=out_npy.shape, ctx=ctx, dtype=out_dtype)
+        data_tvm = tvm.nd.array(in_npy, device=dev)
+        out_tvm = tvm.nd.empty(shape=out_npy.shape, device=dev, dtype=out_dtype)
         for _ in range(1):
             foo(data_tvm, out_tvm)
         if type == "argmax" or type == "argmin":
-            out_tvm_indices = out_tvm.asnumpy()
+            out_tvm_indices = out_tvm.numpy()
             if keepdims:
                 out_tvm_indices = np.take(out_tvm_indices, indices=0, axis=axis)
             if axis is None:
@@ -117,10 +117,10 @@ def verify_reduce_map_ele(in_shape, axis, keepdims, type="sum", dtype="float32")
             elif type == "argmin":
                 tvm.testing.assert_allclose(out_tvm_val, in_npy_map.min(axis=axis), 1e-3, 1e-3)
         else:
-            tvm.testing.assert_allclose(out_tvm.asnumpy(), out_npy, 1e-3, 1e-3)
+            tvm.testing.assert_allclose(out_tvm.numpy(), out_npy, 1e-3, 1e-3)
 
-    for device, ctx in tvm.testing.enabled_targets():
-        check_device(device, ctx)
+    for device, dev in tvm.testing.enabled_targets():
+        check_device(device, dev)
 
 
 @tvm.testing.uses_gpu
@@ -152,5 +152,31 @@ def test_reduce_map():
     )
 
 
+@tvm.testing.uses_gpu
+def test_complex_reduce():
+    in_shape = (2, 3)
+    dtype = "float32"
+    axis = 0
+    keepdims = False
+    A = te.placeholder(shape=in_shape, name="A", dtype=dtype)
+    B = topi.sum(A, axis=axis, keepdims=keepdims)
+    C = topi.add(B, B)
+    D = topi.multiply(B, B)
+    E = topi.add(C, D)
+    for device, dev in tvm.testing.enabled_targets():
+        print("Running on target: %s" % device)
+        with tvm.target.Target(device):
+            s = tvm.topi.testing.get_reduce_schedule(device)(E)
+        foo = tvm.build(s, [A, E], device, name="sum")
+        in_npy = np.random.uniform(-1, 1, size=in_shape).astype(dtype)
+        sum_npy = in_npy.sum(axis=axis, keepdims=keepdims)
+        out_npy = sum_npy * 2 + sum_npy * sum_npy
+        data_tvm = tvm.nd.array(in_npy, device=dev)
+        out_tvm = tvm.nd.empty(shape=out_npy.shape, device=dev, dtype=dtype)
+        foo(data_tvm, out_tvm)
+        tvm.testing.assert_allclose(out_tvm.numpy(), out_npy, 1e-3, 1e-3)
+
+
 if __name__ == "__main__":
     test_reduce_map()
+    test_complex_reduce()

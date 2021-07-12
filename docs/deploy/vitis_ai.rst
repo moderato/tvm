@@ -196,7 +196,7 @@ Hardware setup and docker build
       pip3 install -e . --user
 
 Edge (DPUCZDX8G)
-^^^^^^^^^^^^^^^^
+~~~~~~~~~~~~~~~~
 
 
 For edge deployment we make use of two systems referred to as host and
@@ -304,15 +304,22 @@ Edge hardware setup
   This section provides instructions for setting up with the `Pynq <http://www.pynq.io/>`__ platform but
   Petalinux based flows are also supported.
 
-1. Download the Pynq v2.5 image for your target (use Z1 or Z2 for
+1. Download the Pynq v2.6 image for your target (use Z1 or Z2 for
    Ultra96 target depending on board version) Link to image:
-   https://github.com/Xilinx/PYNQ/releases/tag/v2.5
+   https://github.com/Xilinx/PYNQ/releases/tag/v2.6.0
 2. Follow Pynq instructions for setting up the board: `pynq
    setup <https://pynq.readthedocs.io/en/latest/getting_started.html>`__
-3. After connecting to the board, make sure to run as root. Execute
+3. After connecting to the board, make sure to run as root. **Execute**
    ``su``
-4. Set up DPU on Pynq by following the steps here: `DPU Pynq
-   setup <https://github.com/Xilinx/DPU-PYNQ>`__
+4. Set up DPU on Pynq:
+
+    .. code:: bash
+
+     git clone --branch v1.2.0 --recursive --shallow-submodules https://github.com/Xilinx/DPU-PYNQ.git
+     cd DPU-PYNQ/upgrade
+     make
+     pip3 install pynq-dpu==1.2.0
+
 5. Run the following command to download the DPU bitstream:
 
    .. code:: bash
@@ -343,7 +350,7 @@ interface between TVM and Vitis-AI tools.
    .. code:: bash
 
       apt-get install libhdf5-dev
-      pip3 install pydot h5py
+      pip3 install pydot==1.4.1 h5py==2.8.0
 
 2. Install PyXIR
 
@@ -362,16 +369,17 @@ interface between TVM and Vitis-AI tools.
       mkdir build
       cp cmake/config.cmake build
       cd build
+      echo set\(USE_LLVM OFF\) >> config.cmake
       echo set\(USE_VITIS_AI ON\) >> config.cmake
       cmake ..
-      make
+      make tvm_runtime -j$(nproc)
 
 4. Install TVM
 
    .. code:: bash
 
       cd tvm/python
-      pip3 install -e . --user
+      pip3 install -e .
 
 5. Check whether the setup was successful in the Python shell:
 
@@ -427,8 +435,8 @@ Cloud usage
 This section shows how to accelerate a convolutional neural network
 model in TVM with Vitis-AI on the cloud.
 
-To be able to target the Vitis-AI cloud DPUCADX8G target we first have
-to import the target in PyXIR. This PyXIR package is the interface being
+To be able to target the Vitis-AI cloud DPUCADX8G we first have
+to import the DPU target in PyXIR. This PyXIR package is the interface being
 used by TVM to integrate with the Vitis-AI stack. Additionaly, import
 the typical TVM and Relay modules and the Vitis-AI contrib module inside
 TVM.
@@ -441,34 +449,31 @@ TVM.
    import tvm
    import tvm.relay as relay
    from tvm.contrib.target import vitis_ai
-   from tvm.contrib import util, graph_runtime
+   from tvm.contrib import utils, graph_executor
    from tvm.relay.build_module import bind_params_by_name
-   from tvm.relay.op.contrib.vitis_ai import annotation
+   from tvm.relay.op.contrib.vitis_ai import partition_for_vitis_ai
 
 After importing a convolutional neural network model using the usual
 Relay API's, annotate the Relay expression for the given Vitis-AI DPU
 target and partition the graph.
 
 .. code:: python
-
-   mod["main"] = bind_params_by_name(mod["main"], params)
-   mod = annotation(mod, params, target)
-   mod = relay.transform.MergeCompilerRegions()(mod)
-   mod = relay.transform.PartitionGraph()(mod)
+   
+   dpu = 'DPUCADX8G'
+   mod = partition_for_vitis_ai(mod, params, dpu)
 
 Now, we can build the TVM runtime library for executing the model. The
 TVM target is 'llvm' as the operations that can't be handled by the DPU
-are executed on the CPU. The Vitis-AI target is DPUCADX8G as we are
-targeting the cloud DPU and this target is passed as a config to the TVM
+are executed on the CPU. The Vitis-AI DPU is DPUCADX8G as we are
+targeting the cloud DPU and this DPU identifier is passed as a config to the TVM
 build call.
 
 .. code:: python
 
-   tvm_target = 'llvm'
-   target='DPUCADX8G'
+   target = 'llvm'
 
-   with tvm.transform.PassContext(opt_level=3, config= {'relay.ext.vitis_ai.options.target': target}):
-      lib = relay.build(mod, tvm_target, params=params)
+   with tvm.transform.PassContext(opt_level=3, config= {'relay.ext.vitis_ai.options': {'dpu': dpu}}):
+      lib = relay.build(mod, target, params=params)
 
 As one more step before we can accelerate a model with Vitis-AI in TVM
 we have to quantize and compile the model for execution on the DPU. We
@@ -482,7 +487,7 @@ will take a substantial amount of time.
 
 .. code:: python
 
-   module = graph_runtime.GraphModule(lib["default"](tvm.cpu()))
+   module = graph_executor.GraphModule(lib["default"](tvm.cpu()))
 
    # First N (default = 128) inputs are used for quantization calibration and will
    # be executed on the CPU
@@ -512,7 +517,7 @@ Load the module from compiled files and run inference
    # load the module into memory
    loaded_lib = tvm.runtime.load_module(lib_path)
 
-   module = graph_runtime.GraphModule(lib["default"](tvm.cpu()))
+   module = graph_executor.GraphModule(lib["default"](tvm.cpu()))
    module.set_input(name, data)
    module.run()
 
@@ -524,11 +529,13 @@ model in TVM with Vitis-AI at the edge. The first couple of steps will
 have to be run on the host machine and take care of quantization and
 compilation for deployment at the edge.
 
+A complete ResNet 18 example can be found `here <https://github.com/Xilinx/pyxir/tree/master/examples/tvm>`__.
+
 Host steps
 ^^^^^^^^^^
 
-To be able to target the Vitis-AI cloud DPUCZDX8G target we first have
-to import the target in PyXIR. This PyXIR package is the interface being
+To be able to target the Vitis-AI cloud DPUCZDX8G we first have
+to import the DPU target in PyXIR. This PyXIR package is the interface being
 used by TVM to integrate with the Vitis-AI stack. Additionaly, import
 the typical TVM and Relay modules and the Vitis-AI contrib module inside
 TVM.
@@ -541,28 +548,62 @@ TVM.
    import tvm
    import tvm.relay as relay
    from tvm.contrib.target import vitis_ai
-   from tvm.contrib import util, graph_runtime
+   from tvm.contrib import utils, graph_executor
    from tvm.relay.build_module import bind_params_by_name
-   from tvm.relay.op.contrib.vitis_ai import annotation
+   from tvm.relay.op.contrib.vitis_ai import partition_for_vitis_ai
 
 After importing a convolutional neural network model using the usual
 Relay API's, annotate the Relay expression for the given Vitis-AI DPU
-target and partition the graph.
+and partition the graph.
+
+.. note::
+
+    We recommend converting DPU convolutions' data layouts to NHWC and CPU convolutions'
+    data layouts to NCHW for best DPU and out of the box CPU performance. You can use the
+    ConvertLayout transformation pass two times to achieve this as demonstrated in the code
+    block underneath. You can also leave the CPU convolution layouts in NHWC and tune ARM CPU
+    performance for this data layout to avoid the layout transformation overheads introduced by
+    executing DPU convolutions in NHWC and CPU convolutions in NCHW
+    (check out the `AutoScheduling <https://tvm.apache.org/docs/tutorials/index.html#autoscheduler-template-free-auto-scheduling>`__
+    and `AutoTuning <https://tvm.apache.org/docs/tutorials/autotvm/tune_relay_arm.html>`__
+    tutorials for this).
 
 .. code:: python
 
    mod["main"] = bind_params_by_name(mod["main"], params)
-   mod = annotation(mod, params, target)
-   mod = relay.transform.MergeCompilerRegions()(mod)
-   mod = relay.transform.PartitionGraph()(mod)
+   
+   # For edge DPU we recommend converting the convolutions' data layout
+   #    to NHWC for best performance. Therefore, we first convert the layouts
+   #    of all convolutions to NHWC before partitioning. Afterwards, we can
+   #    convert any remaining convolutions (to be executed on CPU) back to NCHW.
+   desired_layouts = {'nn.conv2d': ['NHWC', 'default']}
+   seq = tvm.transform.Sequential([relay.transform.RemoveUnusedFunctions(),
+                                   relay.transform.ConvertLayout(desired_layouts),
+                                   relay.transform.FoldConstant()])
+   with tvm.transform.PassContext(opt_level=3):
+       mod = seq(mod)
+   
+   dpu = 'DPUCZDX8G-zcu104'
+   # Annotate and partition the Relay expression for the given DPU
+   mod = partition_for_vitis_ai(mod, params, dpu)
+   
+   # After partitioning we recommend transforming the remaining convolutions
+   #    (that will be executed on CPU, if any) back to NCHW data layout
+   #    for best CPU performance
+   desired_layouts = {'nn.conv2d': ['NCHW', 'default']}
+   seq = tvm.transform.Sequential([relay.transform.RemoveUnusedFunctions(),
+                                   relay.transform.ConvertLayout(desired_layouts),
+                                   relay.transform.FoldConstant()])
+   with tvm.transform.PassContext(opt_level=3):
+       mod = seq(mod)
 
 Now, we can build the TVM runtime library for executing the model. The
 TVM target is 'llvm' as the operations that can't be handled by the DPU
 are executed on the CPU. At this point that means the CPU on the host machine.
-The Vitis-AI target is DPUCZDX8G-zcu104 as we are targeting the edge DPU
-on the ZCU104 board and this target is passed as a config to the TVM
+The Vitis-AI DPU identifier is DPUCZDX8G-zcu104 as we are targeting the edge DPU
+on the ZCU104 board and this identifier is passed as a config to the TVM
 build call. Note that different identifiers can be passed for different
-targets, see `edge targets info <#edge-requirements>`__. Additionally, we
+DPU's, see `edge DPU's info <#edge-requirements>`__. Additionally, we
 provide the 'export_runtime_module' config that points to a file to which we
 can export the Vitis-AI runtime module. We have to do this because we will
 first be compiling and quantizing the model on the host machine before building
@@ -572,17 +613,15 @@ can be included.
 
 .. code:: python
 
-   from tvm.contrib import util
-
-   temp = util.tempdir()
-
-   tvm_target = 'llvm'
-   target='DPUCZDX8G-zcu104'
-   export_rt_mod_file = temp.relpath("vitis_ai.rtmod")
-
-   with tvm.transform.PassContext(opt_level=3, config= {'relay.ext.vitis_ai.options.target': target,
-   						        'relay.ext.vitis_ai.options.export_runtime_module': export_rt_mod_file}):
-      lib = relay.build(mod, tvm_target, params=params)
+   target = 'llvm'
+   export_rt_mod_file = "vitis_ai.rtmod"
+   
+   build_options = {
+      'dpu': dpu,
+      'export_runtime_module': export_rt_mod_file
+   }
+   with tvm.transform.PassContext(opt_level=3, config= {'relay.ext.vitis_ai.options': build_options}):
+      lib = relay.build(mod, target, params=params)
 
 We will quantize and compile the model for execution on the DPU using on-the-fly
 quantization on the host machine. This makes use of TVM inference calls
@@ -590,7 +629,7 @@ quantization on the host machine. This makes use of TVM inference calls
 
 .. code:: python
 
-   module = graph_runtime.GraphModule(lib["default"](tvm.cpu()))
+   module = graph_executor.GraphModule(lib["default"](tvm.cpu()))
 
    # First N (default = 128) inputs are used for quantization calibration and will
    # be executed on the CPU
@@ -604,9 +643,9 @@ Save the TVM lib module so that the Vitis-AI runtime module will also be exporte
 
 .. code:: python
 
-   from tvm.contrib import util
+   from tvm.contrib import utils
 
-   temp = util.tempdir()
+   temp = utils.tempdir()
    lib.export_library(temp.relpath("tvm_lib.so"))
 
 After quantizing and compiling the model for Vitis-AI acceleration using the
@@ -617,15 +656,17 @@ in the TVM build.
 .. code:: python
 
    # Export lib for aarch64 target
-   tvm_target = tvm.target.arm_cpu('ultra96')
+   target = tvm.target.arm_cpu('ultra96')
    lib_kwargs = {
         'fcompile': contrib.cc.create_shared,
         'cc': "/usr/aarch64-linux-gnu/bin/ld"
    }
-
-   with tvm.transform.PassContext(opt_level=3,
-                                  config={'relay.ext.vitis_ai.options.load_runtime_module': export_rt_mod_file}):
-        lib_arm = relay.build(mod, tvm_target, params=params)
+   
+   build_options = {
+        'load_runtime_module': export_rt_mod_file
+   }
+   with tvm.transform.PassContext(opt_level=3, config={'relay.ext.vitis_ai.options': build_options}):
+        lib_arm = relay.build(mod, target, params=params)
 
    lib_dpuv2.export_library('tvm_dpu_arm.so', **lib_kwargs)
 
@@ -638,15 +679,31 @@ Edge steps
 ^^^^^^^^^^
 
 After setting up TVM with Vitis-AI on the edge device, you can now load
-the TVM runtime module into memory and feed inputs for inference.
+the TVM runtime module into memory and feed inputs for inference. A nearly
+complete runtiem script can be found underneath. Make sure to run the script
+as root (execute ``su`` in terminal to log into root).
+
+
+.. note::
+
+    You will see a warning about the 'cpu-tf' runtime not being found. This warning is
+    expected on the board and can be ignored. Note also that you **shouldn't** import the
+    PyXIR DPU targets in the run script (``import pyxir.contrib.target.DPUCZDX8G``).
 
 .. code:: python
 
-   ctx = tvm.cpu()
+   import pyxir
+   import tvm
+   from tvm.contrib import graph_executor
+
+   dev = tvm.cpu()
+   
+   # input_name = ...
+   # input_data = ...
 
    # load the module into memory
    lib = tvm.runtime.load_module("tvm_dpu_arm.so")
 
-   module = graph_runtime.GraphModule(lib["default"](tvm.cpu()))
-   module.set_input(name, data)
+   module = graph_executor.GraphModule(lib["default"](dev))
+   module.set_input(input_name, input_data)
    module.run()

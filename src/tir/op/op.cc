@@ -145,6 +145,10 @@ void BinaryOpMatchTypes(PrimExpr& lhs, PrimExpr& rhs, Span span) {  // NOLINT(*)
   }
 }
 
+PrimExpr ret(PrimExpr value, Span span) {
+  return tir::Call(value.dtype(), tir::builtin::ret(), {value}, span);
+}
+
 // maximum and min limits
 PrimExpr max_value(const DataType& dtype, Span span) {
   using namespace tir;
@@ -853,6 +857,8 @@ TIR_REGISTER_PURE_UNARY_OP("tir.acosh");
 TIR_REGISTER_PURE_UNARY_OP("tir.asinh");
 
 TIR_REGISTER_PURE_UNARY_OP("tir.atanh");
+
+TIR_REGISTER_PURE_UNARY_OP("tir.clz");
 
 // binary intrinsics
 TIR_REGISTER_PURE_BINARY_OP("tir.atan2");

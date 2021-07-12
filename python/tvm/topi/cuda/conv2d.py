@@ -96,17 +96,19 @@ def conv2d_cudnn(
     pt, pl, pb, pr = get_pad_tuple(padding, (KH, KW))
     OH = (H + pt + pb - KH) // stride_h + 1
     OW = (W + pl + pr - KW) // stride_w + 1
-    cfg.add_flop(
-        groups
-        * 2
-        * N
-        * OH
-        * OW
-        * CO
-        * CI
-        * ((KH - 1) * dilation_h + 1)
-        * ((KW - 1) * dilation_w + 1)
-    )
+
+    if isinstance(N, int):
+        cfg.add_flop(
+            groups
+            * 2
+            * N
+            * OH
+            * OW
+            * CO
+            * CI
+            * ((KH - 1) * dilation_h + 1)
+            * ((KW - 1) * dilation_w + 1)
+        )
 
     if data.dtype == "int8" or kernel.dtype == "int8":
         if layout == "NCHW":
@@ -115,9 +117,15 @@ def conv2d_cudnn(
     else:
         dtype = data.dtype
 
-    cfg.define_knob("algo", range(8))
-    if cfg.is_fallback:  # Let CUDNN choose the best algo
-        cfg["algo"] = OtherOptionEntity(-1)
+    cfg.define_knob("algo", range(cudnn.algo_to_index("fwd", "CUDNN_CONVOLUTION_FWD_ALGO_COUNT")))
+    if cfg.is_fallback:
+        if cudnn.exists():
+            # Let CUDNN choose the best algo, based on benchmarks run
+            # on the local machine.  In the future, this should be
+            # based on parameters stored in the Target.
+            cfg["algo"] = OtherOptionEntity(-1)
+        else:
+            cfg["algo"] = OtherOptionEntity(0)
 
     return cudnn.conv_forward(
         data,

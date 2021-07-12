@@ -85,19 +85,40 @@ void CleanDir(const std::string& dirname);
  */
 std::string BuildSharedLibrary(std::string file_in);
 
-RPCEnv::RPCEnv() {
-#ifndef _WIN32
-  char cwd[PATH_MAX];
-  if (getcwd(cwd, sizeof(cwd))) {
-    base_ = std::string(cwd) + "/rpc";
+RPCEnv::RPCEnv(const std::string& wd) {
+  if (wd != "") {
+    base_ = wd + "/.cache";
+    mkdir(wd.c_str(), 0777);
+    mkdir(base_.c_str(), 0777);
   } else {
-    base_ = "./rpc";
-  }
-#else
-  base_ = "./rpc";
-#endif
+#if defined(ANDROID) || defined(__ANDROID__)
+    char cwd[PATH_MAX];
+    auto cmdline = fopen("/proc/self/cmdline", "r");
+    fread(cwd, 1, sizeof(cwd), cmdline);
+    fclose(cmdline);
+    std::string android_base_ = "/data/data/" + std::string(cwd) + "/cache";
+    struct stat statbuf;
+    // Check if application data directory exist. If not exist, usually means we run tvm_rpc from
+    // adb shell terminal.
+    if (stat(android_base_.data(), &statbuf) == -1 || !S_ISDIR(statbuf.st_mode)) {
+      // Tmp directory is always writable for 'shell' user.
+      android_base_ = "/data/local/tmp";
+    }
+    base_ = android_base_ + "/rpc";
 
-  mkdir(base_.c_str(), 0777);
+#elif !defined(_WIN32)
+    char cwd[PATH_MAX];
+    if (getcwd(cwd, sizeof(cwd))) {
+      base_ = std::string(cwd) + "/rpc";
+    } else {
+      base_ = "./rpc";
+    }
+#else
+    base_ = "./rpc";
+#endif
+    mkdir(base_.c_str(), 0777);
+  }
+
   TVM_REGISTER_GLOBAL("tvm.rpc.server.workpath").set_body([this](TVMArgs args, TVMRetValue* rv) {
     *rv = this->GetPath(args[0]);
   });

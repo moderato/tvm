@@ -145,18 +145,18 @@ bias_np = np.random.uniform(size=(1, CO, 1, 1)).astype(np.float32)
 conv_np = conv2d_nchw_python(data_np, weight_np, strides, padding)
 out_np = np.maximum(conv_np + bias_np, 0.0)
 
-ctx = tvm.gpu()
-data_tvm = tvm.nd.array(data_np, ctx=ctx)
-weight_tvm = tvm.nd.array(weight_np, ctx=ctx)
-bias_tvm = tvm.nd.array(bias_np, ctx=ctx)
-out_tvm = tvm.nd.empty(out_np.shape, ctx=ctx)
+dev = tvm.cuda()
+data_tvm = tvm.nd.array(data_np, device=dev)
+weight_tvm = tvm.nd.array(weight_np, device=dev)
+bias_tvm = tvm.nd.array(bias_np, device=dev)
+out_tvm = tvm.nd.empty(out_np.shape, device=dev)
 func(data_tvm, weight_tvm, bias_tvm, out_tvm)
 
 # Check results
-np.testing.assert_allclose(out_np, out_tvm.asnumpy(), rtol=1e-3)
+np.testing.assert_allclose(out_np, out_tvm.numpy(), rtol=1e-3)
 
 # Evaluate execution time
-evaluator = func.time_evaluator(func.entry_name, ctx, min_repeat_ms=500)
+evaluator = func.time_evaluator(func.entry_name, dev, min_repeat_ms=500)
 print(
     "Execution time of this operator: %.3f ms"
     % (np.median(evaluator(data_tvm, weight_tvm, bias_tvm, out_tvm).results) * 1000)
@@ -186,18 +186,24 @@ print(task.print_best(log_file, print_mode="cuda"))
 # and resume the status of search policy and cost model with the log file.
 # In the example below we resume the status and do more 5 trials.
 
-cost_model = auto_scheduler.XGBModel()
-cost_model.update_from_file(log_file)
-search_policy = auto_scheduler.SketchPolicy(
-    task, cost_model, init_search_callbacks=[auto_scheduler.PreloadMeasuredStates(log_file)]
-)
-measure_ctx = auto_scheduler.LocalRPCMeasureContext(min_repeat_ms=300)
-tune_option = auto_scheduler.TuningOptions(
-    num_measure_trials=5,
-    runner=measure_ctx.runner,
-    measure_callbacks=[auto_scheduler.RecordToFile(log_file)],
-)
-task.tune(tune_option, search_policy=search_policy)
 
-# Kill the measurement process
-del measure_ctx
+def resume_search(task, log_file):
+    print("Resume search:")
+    cost_model = auto_scheduler.XGBModel()
+    cost_model.update_from_file(log_file)
+    search_policy = auto_scheduler.SketchPolicy(
+        task, cost_model, init_search_callbacks=[auto_scheduler.PreloadMeasuredStates(log_file)]
+    )
+    measure_ctx = auto_scheduler.LocalRPCMeasureContext(min_repeat_ms=300)
+    tune_option = auto_scheduler.TuningOptions(
+        num_measure_trials=5,
+        runner=measure_ctx.runner,
+        measure_callbacks=[auto_scheduler.RecordToFile(log_file)],
+    )
+    task.tune(tune_option, search_policy=search_policy)
+
+    # Kill the measurement process
+    del measure_ctx
+
+
+resume_search(task, log_file)

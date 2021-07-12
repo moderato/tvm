@@ -28,9 +28,9 @@
 #include <tvm/relay/expr.h>
 #include <tvm/relay/function.h>
 #include <tvm/relay/transform.h>
+#include <tvm/runtime/logging.h>
 #include <tvm/runtime/object.h>
 #include <tvm/runtime/registry.h>
-#include <tvm/support/logging.h>
 
 #include <fstream>
 
@@ -172,8 +172,8 @@ class ScopeStack {
   void PopStack() { this->scope_stack.pop_back(); }
 };
 
-struct DuplicateKeyError : public dmlc::Error {
-  explicit DuplicateKeyError(const std::string& msg) : dmlc::Error(msg) {}
+struct DuplicateKeyError : public Error {
+  explicit DuplicateKeyError(const std::string& msg) : Error(msg) {}
 };
 
 /*! \brief A table of interning strings as global function and type names. */
@@ -523,18 +523,27 @@ class Parser {
   /*! \brief Convert a numeric token to an NDArray for embedding into the Relay program. */
   NDArray NumberToNDArray(const Token& token) {
     if (token->token_type == TokenType::kInteger) {
-      DLContext ctx = {DLDeviceType::kDLCPU, 0};
-      auto dtype = String2DLDataType("int32");
-      auto data = NDArray::Empty({}, dtype, ctx);
-      auto array = reinterpret_cast<int32_t*>(data->data);
-      // revisit this, literal node issue.
-      int64_t value = Downcast<tvm::Integer>(token->data);
-      array[0] = (int32_t)value;
-      return data;
+      DLDevice dev = {DLDeviceType::kDLCPU, 0};
+      int64_t i = Downcast<tvm::Integer>(token->data);
+      if (i > std::numeric_limits<int32_t>::max()) {
+        auto dtype = String2DLDataType("int64");
+        auto data = NDArray::Empty({}, dtype, dev);
+        auto array = reinterpret_cast<int64_t*>(data->data);
+        // revisit this, literal node issue.
+        array[0] = i;
+        return data;
+      } else {
+        auto dtype = String2DLDataType("int32");
+        auto data = NDArray::Empty({}, dtype, dev);
+        auto array = reinterpret_cast<int32_t*>(data->data);
+        // revisit this, literal node issue.
+        array[0] = i;
+        return data;
+      }
     } else if (token->token_type == TokenType::kFloat) {
-      DLContext ctx = {DLDeviceType::kDLCPU, 0};
+      DLDevice dev = {DLDeviceType::kDLCPU, 0};
       auto float_imm = Downcast<tvm::FloatImm>(token->data);
-      auto data = NDArray::Empty({}, float_imm->dtype, ctx);
+      auto data = NDArray::Empty({}, float_imm->dtype, dev);
       auto array = reinterpret_cast<float*>(data->data);
       // revisit this, literal node issue.
       // TODO(@jroesch): bounds checking
@@ -549,9 +558,9 @@ class Parser {
 
   /*! \brief Convert a boolean value to an NDArray for embedding into the Relay program. */
   NDArray BooleanToNDarray(bool value) {
-    DLContext ctx = {DLDeviceType::kDLCPU, 0};
+    DLDevice dev = {DLDeviceType::kDLCPU, 0};
     auto dtype = String2DLDataType("bool");
-    auto data = NDArray::Empty({}, dtype, ctx);
+    auto data = NDArray::Empty({}, dtype, dev);
     auto array = reinterpret_cast<bool*>(data->data);
     array[0] = value;
     return data;
@@ -1334,6 +1343,8 @@ class Parser {
       case TokenType::kBoolean:
       case TokenType::kStringLiteral:
         return Match(next->token_type)->data;
+      case TokenType::kMetaReference:
+        return ParseMetaRef();
       case TokenType::kLSquare: {
         return ParseSequence<ObjectRef>(TokenType::kLSquare, TokenType::kComma, TokenType::kRSquare,
                                         [&]() { return ParseAttributeValue(); });
@@ -1369,7 +1380,7 @@ class Parser {
     DLOG(INFO) << "Parser::ParseAttrs";
     Map<String, ObjectRef> kwargs;
     while (Peek()->token_type == TokenType::kIdentifier) {
-      auto key = Match(TokenType::kIdentifier).ToString();
+      auto key = GetHierarchicalName(ParseHierarchicalName().data);
       Match(TokenType::kEqual);
       // TOOD(@jroesch): syntactically what do we allow to appear in attribute right hand side.
       auto value = ParseAttributeValue();
@@ -1408,7 +1419,7 @@ class Parser {
             auto last_meta = Lookahead(2)->token_type == TokenType::kCloseParen;
             auto is_meta_attrs = is_meta_next && last_meta;
 
-            if (is_op && (is_pretty_attrs || is_meta_attrs)) {
+            if (is_pretty_attrs || is_meta_attrs) {
               if (is_meta_attrs) {
                 auto meta_ref = ParseMetaRef();
                 if (meta_ref.as<BaseAttrsNode>()) {
@@ -1420,13 +1431,23 @@ class Parser {
                 }
               } else {
                 auto raw_attrs = ParseAttrs();
-                auto attr_obj = tvm::ReflectionVTable::Global()->CreateObject(op_key, raw_attrs);
-                ICHECK(attr_obj.defined());
-                attrs = Downcast<Attrs>(attr_obj);
+                if (is_op && op_key.size()) {
+                  auto attr_obj = tvm::ReflectionVTable::Global()->CreateObject(op_key, raw_attrs);
+                  ICHECK(attr_obj.defined());
+                  attrs = Downcast<Attrs>(attr_obj);
+                } else if (raw_attrs.count("attrs_type_key")) {
+                  String attr_key = Downcast<String>(raw_attrs["attrs_type_key"]);
+                  if (attr_key.size()) {
+                    raw_attrs.erase("attrs_type_key");
+                    auto tbl = tvm::ReflectionVTable::Global();
+                    auto attr_obj = tbl->CreateObject(attr_key, raw_attrs);
+                    ICHECK(attr_obj.defined());
+                    attrs = Downcast<Attrs>(attr_obj);
+                  }
+                }
               }
               return true;
             }
-
             return false;
           });
 
@@ -1480,7 +1501,7 @@ class Parser {
     DLOG(INFO) << "op_name=" << op_name << " span=" << span;
     try {
       return Op::Get(op_name);
-    } catch (const dmlc::Error& e) {
+    } catch (const Error& e) {
       // we can relax this, but probably need to relax checks or return non-null here.
       this->diag_ctx.EmitFatal(Diagnostic::Error(span)
                                << "operator `" << op_name
@@ -1504,7 +1525,7 @@ class Parser {
         }
         case TokenType::kBoolean: {
           Consume(TokenType::kBoolean);
-          int value = Downcast<tvm::Integer>(next->data);
+          int64_t value = Downcast<tvm::Integer>(next->data);
           auto boolean = BooleanToNDarray(value);
           Expr e = Constant(boolean, next->span);
           ICHECK(e->span.defined()) << "constant spans must be defined";
@@ -1533,18 +1554,7 @@ class Parser {
             auto spanned_idents = ParseHierarchicalName();
             auto idents = spanned_idents.data;
             auto span = spanned_idents.span;
-            ICHECK_NE(idents.size(), 0);
-            std::stringstream op_name;
-            int i = 0;
-            int periods = idents.size() - 1;
-            for (auto ident : idents) {
-              op_name << ident;
-              if (i < periods) {
-                op_name << ".";
-                i++;
-              }
-            }
-            return GetOp(op_name.str(), span);
+            return GetOp(GetHierarchicalName(idents), span);
           }
         }
         case TokenType::kGraph: {
@@ -1682,6 +1692,21 @@ class Parser {
     }
 
     return Spanned<Array<String>>(idents, span);
+  }
+
+  std::string GetHierarchicalName(Array<String> idents) {
+    ICHECK_NE(idents.size(), 0);
+    std::stringstream hierarchical_name;
+    int i = 0;
+    int periods = idents.size() - 1;
+    for (auto ident : idents) {
+      hierarchical_name << ident;
+      if (i < periods) {
+        hierarchical_name << ".";
+        i++;
+      }
+    }
+    return hierarchical_name.str();
   }
 
   /*! \brief Parse a shape. */

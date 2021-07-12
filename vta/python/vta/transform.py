@@ -231,7 +231,13 @@ def LiftAllocToScopeBegin():
                     body = tvm.tir.AttrStmt(op.node, op.attr_key, op.value, body)
                 elif isinstance(op, tvm.tir.For):
                     body = tvm.tir.For(
-                        op.loop_var, op.min, op.extent, op.for_type, op.device_api, body
+                        op.loop_var,
+                        op.min,
+                        op.extent,
+                        op.kind,
+                        body,
+                        op.thread_binding,
+                        op.annotations,
                     )
                 else:
                     raise RuntimeError("unexpected op")
@@ -314,7 +320,9 @@ def InjectCoProcSync():
             if _match_pragma(stmt, "trim_loop"):
                 op = stmt.body
                 assert isinstance(op, tvm.tir.For)
-                return tvm.tir.For(op.loop_var, op.min, 2, op.for_type, op.device_api, op.body)
+                return tvm.tir.For(
+                    op.loop_var, op.min, 2, op.kind, op.body, op.thread_binding, op.annotations
+                )
             return None
 
         return f.with_body(
@@ -401,8 +409,6 @@ def InjectDMAIntrin():
 
     def _get_2d_pattern(buf, elem_width, elem_bytes, dtype, scope, allow_fold):
         elem_block = elem_bytes * 8 // elem_width
-        if buf.dtype != dtype:
-            raise RuntimeError("Expect buffer type to be %s instead of %s" % (dtype, buf.dtype))
         shape, strides = buf.shape, buf.strides
         if not utils.equal_const_int(idxm(buf.elem_offset, elem_block), 0):
             raise RuntimeError("scope %s need to have block=%d" % (scope, elem_block))
@@ -413,7 +419,7 @@ def InjectDMAIntrin():
             strides = list(x for x in strides)
 
         def raise_error():
-            """Internal function to raise error """
+            """Internal function to raise error"""
             raise RuntimeError(
                 (
                     "Scope[%s]: cannot detect 2d pattern with elem_block=%d:"
@@ -582,6 +588,10 @@ def InjectDMAIntrin():
             x_size, y_size, x_stride, offset = _get_2d_pattern(
                 src, elem_width, elem_bytes, data_type, dst.scope, allow_fold=allow_fold
             )
+
+            if data_type != src.dtype:
+                assert data_type == "int%d" % env.ACC_WIDTH and src.dtype == "int%d" % env.INP_WIDTH
+                mem_type = env.dev.MEM_ID_ACC_8BIT
 
             irb = tvm.tir.ir_builder.create()
             irb.scope_attr(env.dev.vta_axis, "coproc_scope", env.dev.get_task_qid(task_qid))

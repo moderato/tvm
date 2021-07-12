@@ -25,7 +25,7 @@ Get Started
 -----------
 
 - Follow the :doc:`instructions <install/index>` to install TVM.
-- Checkout the :doc:`tutorials <tutorials/index>`.
+- Checkout the :doc:`Getting Started with TVM Tutorial <tutorials/index>`.
 
 For Developers
 --------------
@@ -44,6 +44,9 @@ For Developers
    contribute/index
    deploy/index
    dev/how_to
+   microtvm/index
+   errors
+   faq
 
 .. toctree::
    :maxdepth: 1
@@ -75,7 +78,6 @@ For Developers
    :caption: MISC
 
    vta/index
-   faq
 
 
 Index

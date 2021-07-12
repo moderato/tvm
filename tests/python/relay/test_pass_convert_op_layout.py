@@ -499,6 +499,159 @@ def test_bn_convert_layout():
     assert len(has_lt) == 1
 
 
+def test_slice_like_convert_layout():
+    def verify_slice_like(after, expected_axes):
+        # Verify if the slice_like after the convert layout has the expected axes.
+        has_expected = list()
+        checker = lambda x: has_expected.append(
+            isinstance(x, tvm.relay.expr.Call)
+            and x.op.name == "slice_like"
+            and str(x.attrs.axes) == str(expected_axes)
+        )
+        relay.analysis.post_order_visit(after, checker)
+        assert any(has_expected)
+
+    def func_nhwc():
+        x = relay.var("x", shape=(1, 56, 56, 64))
+        weight1 = relay.var("weight1", shape=(3, 3, 64, 32))
+        y = relay.nn.conv2d(
+            x,
+            weight1,
+            channels=32,
+            kernel_size=(3, 3),
+            padding=(1, 1),
+            data_layout="NHWC",
+            kernel_layout="HWIO",
+        )
+        out = relay.slice_like(y, y, axes=[1, 2])
+        return relay.Function(analysis.free_vars(out), out)
+
+    after = run_opt_pass(func_nhwc(), transform.ConvertLayout({"nn.conv2d": ["NCHW", "default"]}))
+    verify_slice_like(after, [2, 3])
+
+    def func_nchw():
+        x = relay.var("x", shape=(1, 64, 56, 56))
+        weight1 = relay.var("weight1", shape=(32, 64, 3, 3))
+        y = relay.nn.conv2d(
+            x,
+            weight1,
+            channels=32,
+            kernel_size=(3, 3),
+            padding=(1, 1),
+            data_layout="NCHW",
+            kernel_layout="OIHW",
+        )
+        out = relay.slice_like(y, y, axes=[2, 3])
+        return relay.Function(analysis.free_vars(out), out)
+
+    after = run_opt_pass(func_nchw(), transform.ConvertLayout({"nn.conv2d": ["NHWC", "default"]}))
+    verify_slice_like(after, [1, 2])
+
+    def func_vars():
+        x = relay.var("x", shape=(1, 56, 56, 64))
+        weight1 = relay.var("weight1", shape=(3, 3, 64, 32))
+        y = relay.nn.conv2d(
+            x,
+            weight1,
+            channels=32,
+            kernel_size=(3, 3),
+            padding=(1, 1),
+            data_layout="NHWC",
+            kernel_layout="HWIO",
+        )
+        # z has no layout information so convert layout won't happen.
+        z = relay.var("y", shape=(1, 56, 56, 32))
+        out = relay.slice_like(y, z, axes=[1, 2])
+        return relay.Function(analysis.free_vars(out), out)
+
+    after = run_opt_pass(func_vars(), transform.ConvertLayout({"nn.conv2d": ["NCHW", "default"]}))
+    verify_slice_like(after, [1, 2])
+
+
+def test_transpose_convert_layout():
+    def verify_transpose(after, expected_axes, expected_transform_cnt):
+        # Verify if the transpose after the convert layout has the expected axes.
+        has_expected = list()
+        checker = lambda x: has_expected.append(
+            isinstance(x, tvm.relay.expr.Call)
+            and x.op.name == "transpose"
+            and str(x.attrs.axes) == str(expected_axes)
+        )
+        relay.analysis.post_order_visit(after, checker)
+        assert any(has_expected), after
+
+        is_transform = list()
+        checker = lambda x: is_transform.append(
+            1 if isinstance(x, tvm.relay.expr.Call) and x.op.name == "layout_transform" else 0
+        )
+        relay.analysis.post_order_visit(after, checker)
+        assert (
+            sum(is_transform) == expected_transform_cnt
+        ), "Expected %s layout_transform, but get\n%s" % (expected_transform_cnt, after)
+
+    def nhwc_to_nchw():
+        x = relay.var("x", shape=(1, 56, 56, 64))
+        weight1 = relay.var("weight1", shape=(3, 3, 64, 32))
+        y = relay.nn.conv2d(
+            x,
+            weight1,
+            channels=32,
+            kernel_size=(3, 3),
+            padding=(1, 1),
+            data_layout="NHWC",
+            kernel_layout="HWIO",
+        )
+        z = relay.var("z", shape=(56, 56, 32))
+        out = relay.add(y, z)
+        out = relay.transpose(out, axes=[0, 3, 1, 2])
+        out = relay.nn.batch_flatten(out)
+        func = relay.Function(analysis.free_vars(out), out)
+        return run_opt_pass(func, transform.ConvertLayout({"nn.conv2d": ["NCHW", "default"]}))
+
+    verify_transpose(nhwc_to_nchw(), [0, 1, 2, 3], 3)
+
+    def nchw_to_nhwc():
+        x = relay.var("x", shape=(1, 64, 56, 56))
+        weight1 = relay.var("weight1", shape=(32, 64, 3, 3))
+        y = relay.nn.conv2d(
+            x,
+            weight1,
+            channels=32,
+            kernel_size=(3, 3),
+            padding=(1, 1),
+            data_layout="NCHW",
+            kernel_layout="OIHW",
+        )
+        z = relay.var("z", shape=(32, 56, 56))
+        out = relay.add(y, z)
+        out = relay.transpose(out, axes=[0, 2, -1, 1])  # Also test a negative axis.
+        out = relay.nn.batch_flatten(out)
+        func = relay.Function(analysis.free_vars(out), out)
+        return run_opt_pass(func, transform.ConvertLayout({"nn.conv2d": ["NHWC", "default"]}))
+
+    verify_transpose(nchw_to_nhwc(), [0, 1, 2, 3], 3)
+
+    def default_axes():
+        x = relay.var("x", shape=(1, 64, 56, 56))
+        weight1 = relay.var("weight1", shape=(32, 64, 3, 3))
+        y = relay.nn.conv2d(
+            x,
+            weight1,
+            channels=32,
+            kernel_size=(3, 3),
+            padding=(1, 1),
+            data_layout="NCHW",
+            kernel_layout="OIHW",
+        )
+        z = relay.var("z", shape=(32, 56, 56))
+        out = relay.add(y, z)
+        out = relay.transpose(out)  # No axes provided, will use the reversed axes.
+        func = relay.Function(analysis.free_vars(out), out)
+        return run_opt_pass(func, transform.ConvertLayout({"nn.conv2d": ["NHWC", "default"]}))
+
+    verify_transpose(default_axes(), [2, 1, 3, 0], 3)
+
+
 def test_resnet_convert_layout():
     def before():
         x = relay.var("x", shape=(1, 56, 56, 64))
@@ -582,7 +735,7 @@ def test_scalar_convert_layout():
 
 
 def test_conv_bn_convert_layout():
-    """ Check that layout transforms are propagated through bn. """
+    """Check that layout transforms are propagated through bn."""
 
     def before():
         x = relay.var("x", shape=(1, 56, 56, 64))
@@ -944,7 +1097,7 @@ def test_qnn_conv_nhwc_convert_layout():
 
 
 def test_conv_convert_kernel_layout():
-    """ Check that convolution kernel layout is correctly transformed. """
+    """Check that convolution kernel layout is correctly transformed."""
 
     def before():
         x = relay.var("x", shape=(1, 56, 56, 64))
@@ -1082,6 +1235,49 @@ def test_conv_strided_slice_convert_layout():
     assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
 
 
+def test_conv_strided_slice_axes_convert_layout():
+    def before():
+        x = relay.var("x", shape=(1, 28, 28, 32))
+        weight = relay.var("weight", shape=(3, 3, 32, 32))
+        y = relay.nn.conv2d(
+            x,
+            weight,
+            channels=32,
+            kernel_size=(3, 3),
+            padding=(1, 1),
+            data_layout="NHWC",
+            kernel_layout="HWIO",
+        )
+        y = relay.strided_slice(y, begin=[0, 16], end=[1, 33], strides=[1, 1], axes=[0, 3])
+        y = relay.Function(analysis.free_vars(y), y)
+        return y
+
+    def expected():
+        x = relay.var("x", shape=(1, 28, 28, 32))
+        weight = relay.var("weight", shape=(3, 3, 32, 32))
+        weight = relay.layout_transform(weight, "HWIO", "OIHW")
+        x = relay.layout_transform(x, "NHWC", "NCHW")
+        y = relay.nn.conv2d(
+            x,
+            weight,
+            channels=32,
+            kernel_size=(3, 3),
+            padding=(1, 1),
+            data_layout="NCHW",
+            kernel_layout="OIHW",
+        )
+        y = relay.strided_slice(y, begin=[0, 16], end=[1, 33], strides=[1, 1], axes=[0, 1])
+
+        y = relay.layout_transform(y, "NCHW", "NHWC")
+        y = relay.Function(analysis.free_vars(y), y)
+        return y
+
+    a = run_opt_pass(before(), transform.ConvertLayout({"nn.conv2d": ["NCHW", "default"]}))
+    b = run_opt_pass(expected(), transform.InferType())
+
+    assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
+
+
 def test_conv_roi_pool_convert_layout():
     def before():
         x = relay.var("x", shape=(1, 64, 56, 56))
@@ -1136,7 +1332,7 @@ def test_conv_roi_pool_convert_layout():
 
 
 def test_default_keyword():
-    """ Check that the default keyword selects correct TVM default layout. """
+    """Check that the default keyword selects correct TVM default layout."""
 
     def before():
         x = relay.var("x", shape=(1, 64, 56, 56))
@@ -1403,6 +1599,288 @@ def test_convert_with_config():
     assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
 
 
+def test_conv_squeeze_convert_layout():
+    def _test_conv_squeeze_convert_layout1():
+        # specified axis is squeezed
+        def before():
+            x = relay.var("x", shape=(1, 1, 1, 2048))
+            weight = relay.var("weight", shape=(1, 1, 2048, 1000))
+            y = relay.nn.conv2d(
+                x,
+                weight,
+                channels=1000,
+                kernel_size=(1, 1),
+                data_layout="NHWC",
+                kernel_layout="HWIO",
+            )
+            y = relay.nn.relu(y)
+            y = relay.squeeze(y, axis=[-3])
+            return relay.Function(analysis.free_vars(y), y)
+
+        def expected():
+            x = relay.var("x", shape=(1, 1, 1, 2048))
+            weight = relay.var("weight", shape=(1, 1, 2048, 1000))
+            weight = relay.layout_transform(weight, "HWIO", "OIHW")
+            x = relay.layout_transform(x, "NHWC", "NCHW")
+            y = relay.nn.conv2d(x, weight, channels=1000, kernel_size=(1, 1))
+            y = relay.nn.relu(y)
+            y = relay.squeeze(y, axis=[2])
+            y = relay.layout_transform(y, "NCW", "NWC")
+            return relay.Function(analysis.free_vars(y), y)
+
+        a = before()
+        a = run_opt_pass(a, transform.ConvertLayout({"nn.conv2d": ["NCHW", "default"]}))
+        b = run_opt_pass(expected(), transform.InferType())
+
+        assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
+
+    def _test_conv_squeeze_convert_layout2():
+        # all axes of dimension 1 are squeezed
+        def before():
+            x = relay.var("x", shape=(1, 1, 1, 2048))
+            weight = relay.var("weight", shape=(1, 1, 2048, 1000))
+            y = relay.nn.conv2d(
+                x,
+                weight,
+                channels=1000,
+                kernel_size=(1, 1),
+                data_layout="NHWC",
+                kernel_layout="HWIO",
+            )
+            y = relay.nn.relu(y)
+            y = relay.squeeze(y)
+            return relay.Function(analysis.free_vars(y), y)
+
+        def expected():
+            x = relay.var("x", shape=(1, 1, 1, 2048))
+            weight = relay.var("weight", shape=(1, 1, 2048, 1000))
+            weight = relay.layout_transform(weight, "HWIO", "OIHW")
+            x = relay.layout_transform(x, "NHWC", "NCHW")
+            y = relay.nn.conv2d(x, weight, channels=1000, kernel_size=(1, 1))
+            y = relay.nn.relu(y)
+            y = relay.squeeze(y, [0, 2, 3])
+            return relay.Function(analysis.free_vars(y), y)
+
+        a = before()
+        a = run_opt_pass(a, transform.ConvertLayout({"nn.conv2d": ["NCHW", "default"]}))
+        b = run_opt_pass(expected(), transform.InferType())
+
+        assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
+
+    def _test_conv_squeeze_convert_layout3():
+        # squeeze axis is empty
+        def before():
+            x = relay.var("x", shape=(1, 1, 1, 2048))
+            weight = relay.var("weight", shape=(1, 1, 2048, 1000))
+            y = relay.nn.conv2d(
+                x,
+                weight,
+                channels=1000,
+                kernel_size=(1, 1),
+                data_layout="NHWC",
+                kernel_layout="HWIO",
+            )
+            y = relay.nn.relu(y)
+            y = relay.squeeze(y, axis=[])
+            return relay.Function(analysis.free_vars(y), y)
+
+        def expected():
+            x = relay.var("x", shape=(1, 1, 1, 2048))
+            weight = relay.var("weight", shape=(1, 1, 2048, 1000))
+            weight = relay.layout_transform(weight, "HWIO", "OIHW")
+            x = relay.layout_transform(x, "NHWC", "NCHW")
+            y = relay.nn.conv2d(x, weight, channels=1000, kernel_size=(1, 1))
+            y = relay.nn.relu(y)
+            y = relay.squeeze(y, axis=[])
+            y = relay.layout_transform(y, "NCHW", "NHWC")
+            return relay.Function(analysis.free_vars(y), y)
+
+        a = before()
+        a = run_opt_pass(a, transform.ConvertLayout({"nn.conv2d": ["NCHW", "default"]}))
+        b = run_opt_pass(expected(), transform.InferType())
+
+        assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
+
+    _test_conv_squeeze_convert_layout1()
+    _test_conv_squeeze_convert_layout2()
+    _test_conv_squeeze_convert_layout3()
+
+
+def test_conv_reduce_convert_layout():
+    def _test_conv_reduce_convert_layout1():
+        def before():
+            x = relay.var("x", shape=(1, 1, 1, 2048))
+            weight = relay.var("weight", shape=(1, 1, 2048, 1000))
+            y = relay.nn.conv2d(
+                x,
+                weight,
+                channels=1000,
+                kernel_size=(1, 1),
+                data_layout="NHWC",
+                kernel_layout="HWIO",
+            )
+            y = relay.nn.relu(y)
+            y = relay.sum(y, axis=(1, 2))
+            y = relay.sum(y, axis=(1,))
+            y = relay.sum(y)
+            y = relay.sum(y)
+            return relay.Function(analysis.free_vars(y), y)
+
+        def expected():
+            x = relay.var("x", shape=(1, 1, 1, 2048))
+            weight = relay.var("weight", shape=(1, 1, 2048, 1000))
+            weight = relay.layout_transform(weight, "HWIO", "OIHW")
+            x = relay.layout_transform(x, "NHWC", "NCHW")
+            y = relay.nn.conv2d(x, weight, channels=1000, kernel_size=(1, 1))
+            y = relay.nn.relu(y)
+            y = relay.sum(y, axis=(2, 3))
+            y = relay.sum(y, axis=(1,))
+            y = relay.sum(y)
+            y = relay.sum(y)
+            return relay.Function(analysis.free_vars(y), y)
+
+        a = before()
+        a = run_opt_pass(a, transform.ConvertLayout({"nn.conv2d": ["NCHW", "default"]}))
+        b = run_opt_pass(expected(), transform.InferType())
+
+        assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
+
+    def _test_conv_reduce_convert_layout2():
+        def _set_span(y, text):
+            return relay.Call(
+                y.op, y.args, y.attrs, y.type_args, relay.Span(relay.SourceName(text), 0, 0, 0, 0)
+            )
+
+        def before():
+            x = relay.var("x", shape=(1, 38, 38, 512))
+            weight = relay.var("weight", shape=(3, 3, 512, 512))
+            y = relay.nn.conv2d(
+                x,
+                weight,
+                channels=512,
+                kernel_size=(3, 3),
+                data_layout="NHWC",
+                kernel_layout="HWIO",
+            )
+            y = _set_span(y, "SpanConv2D")
+            y = relay.nn.relu(y)
+            y = _set_span(y, "SpanRelu")
+            y = relay.multiply(y, y)
+            y = _set_span(y, "SpanMultiply")
+            y = relay.sum(y, axis=(3,), keepdims=True)
+            y = _set_span(y, "SpanSum")
+            return relay.Function(analysis.free_vars(y), y)
+
+        def expected():
+            x = relay.var("x", shape=(1, 38, 38, 512))
+            weight = relay.var("weight", shape=(3, 3, 512, 512))
+            weight = relay.layout_transform(weight, "HWIO", "OIHW")
+            x = relay.layout_transform(x, "NHWC", "NCHW")
+            y = relay.nn.conv2d(x, weight, channels=512, kernel_size=(3, 3))
+            y = relay.nn.relu(y)
+            y = relay.multiply(y, y)
+            y = relay.sum(y, axis=(1,), keepdims=True)
+            y = relay.layout_transform(y, "NCHW", "NHWC")
+            return relay.Function(analysis.free_vars(y), y)
+
+        a = before()
+        a = run_opt_pass(a, transform.ConvertLayout({"nn.conv2d": ["NCHW", "default"]}))
+        assert "SpanConv2D" in a.astext()
+        assert "SpanRelu" in a.astext()
+        assert "SpanMultiply" in a.astext()
+        assert "SpanSum" in a.astext()
+        b = run_opt_pass(expected(), transform.InferType())
+
+        assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
+
+    _test_conv_reduce_convert_layout1()
+    _test_conv_reduce_convert_layout2()
+
+
+def test_image_resize2d_convert_layout():
+    def _test_image_resize_convert_layout_nchw_to_nhwc():
+        def before():
+            x = relay.var("x", shape=(1, 2, 4, 4))
+            y = relay.image.resize2d(x, (8, 8))
+            y = relay.Function([x], y)
+            return y
+
+        def expected():
+            x = relay.var("x", shape=(1, 2, 4, 4))
+            x = relay.layout_transform(x, "NCHW", "NHWC")
+            y = relay.image.resize2d(x, (8, 8), layout="NHWC")
+            y = relay.layout_transform(y, "NHWC", "NCHW")
+            y = relay.Function(relay.analysis.free_vars(y), y)
+            return y
+
+        a = before()
+        a = run_opt_pass(a, transform.ConvertLayout({"image.resize2d": ["NHWC"]}))
+        b = run_opt_pass(expected(), transform.InferType())
+
+        assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
+
+    def _test_image_resize_convert_layout_nhwc_to_nchw():
+        def before():
+            x = relay.var("x", shape=(1, 4, 4, 2))
+            y = relay.image.resize2d(x, (8, 8), layout="NHWC")
+            y = relay.Function([x], y)
+            return y
+
+        def expected():
+            x = relay.var("x", shape=(1, 4, 4, 2))
+            x = relay.layout_transform(x, "NHWC", "NCHW")
+            y = relay.image.resize2d(x, (8, 8), layout="NCHW")
+            y = relay.layout_transform(y, "NCHW", "NHWC")
+            y = relay.Function(relay.analysis.free_vars(y), y)
+            return y
+
+        a = before()
+        a = run_opt_pass(a, transform.ConvertLayout({"image.resize2d": ["NCHW"]}))
+        b = run_opt_pass(expected(), transform.InferType())
+
+        assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
+
+    _test_image_resize_convert_layout_nchw_to_nhwc()
+    _test_image_resize_convert_layout_nhwc_to_nchw()
+
+
+def test_conv_image_resize2d_convert_layout():
+    """Check that layout transforms are propagated through image resize."""
+
+    def before():
+        x = relay.var("x", shape=(1, 56, 56, 64))
+        weight = relay.var("weight", shape=(3, 3, 64, 64))
+        y = relay.nn.conv2d(
+            x,
+            weight,
+            channels=64,
+            kernel_size=(3, 3),
+            padding=(1, 1),
+            data_layout="NHWC",
+            kernel_layout="HWIO",
+        )
+        y = relay.image.resize2d(y, (112, 112), layout="NHWC")
+        y = relay.Function(analysis.free_vars(y), y)
+        return y
+
+    def expected():
+        x = relay.var("x", shape=(1, 56, 56, 64))
+        w = relay.var("weight", shape=(3, 3, 64, 64))
+        x = relay.layout_transform(x, "NHWC", "NCHW")
+        w = relay.layout_transform(w, "HWIO", "OIHW")
+        y = relay.nn.conv2d(x, w, channels=64, kernel_size=(3, 3), padding=(1, 1))
+        y = relay.image.resize2d(y, (112, 112), layout="NCHW")
+        y = relay.layout_transform(y, "NCHW", "NHWC")
+        y = relay.Function(analysis.free_vars(y), y)
+        return y
+
+    a = before()
+    a = run_opt_pass(a, transform.ConvertLayout({"nn.conv2d": ["NCHW", "default"]}))
+    b = run_opt_pass(expected(), transform.InferType())
+
+    assert tvm.ir.structural_equal(a, b), "Actual = \n" + str(a)
+
+
 if __name__ == "__main__":
     test_qnn_binary_no_convert_layout()
     test_no_convert_layout()
@@ -1412,6 +1890,8 @@ if __name__ == "__main__":
     test_conv_concat_convert_layout()
     test_dual_path_convert_layout()
     test_bn_convert_layout()
+    test_slice_like_convert_layout()
+    test_transpose_convert_layout()
     test_resnet_convert_layout()
     test_scalar_convert_layout()
     test_conv_bn_convert_layout()
@@ -1429,3 +1909,8 @@ if __name__ == "__main__":
     test_different_ops_convert_layout()
     test_no_desired_layout()
     test_convert_with_config()
+    test_conv_squeeze_convert_layout()
+    test_conv_reduce_convert_layout()
+    test_conv_strided_slice_axes_convert_layout()
+    test_image_resize_convert_layout()
+    test_conv_image_resize_convert_layout()

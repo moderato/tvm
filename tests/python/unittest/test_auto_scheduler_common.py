@@ -16,12 +16,8 @@
 # under the License.
 
 """Common functions for auto_scheduler test cases"""
-
-import threading
-
 import tvm
-from tvm import te, auto_scheduler
-from tvm import topi
+from tvm import auto_scheduler, te, topi
 from tvm.topi.nn.winograd_util import winograd_transform_matrices
 from tvm.topi.utils import get_const_tuple
 
@@ -108,7 +104,7 @@ def conv2d_nchw_bn_relu_auto_scheduler_test(
 @auto_scheduler.register_workload
 def max_pool2d_auto_scheduler_test(N, H, W, CI, padding):
     data = te.placeholder((N, CI, H, W), name="Data")
-    out = topi.nn.pool(data, [2, 2], [1, 1], [padding, padding, padding, padding], "max")
+    out = topi.nn.pool2d(data, [2, 2], [1, 1], [1, 1], [padding, padding, padding, padding], "max")
 
     return [data, out]
 
@@ -145,6 +141,23 @@ def invalid_compute_definition():
     r1 = te.reduce_axis((0, 2), name="r1")
     r2 = te.reduce_axis((0, 2), name="r1")
     B = te.compute((10,), lambda i: te.sum(A[i][r1 + r2], axis=[r1, r2]), name="B")
+    return [A, B]
+
+
+@auto_scheduler.register_workload
+def zero_rank_reduce_auto_scheduler_test(N):
+    A = tvm.te.placeholder((N,), name="A")
+    k = tvm.te.reduce_axis((0, N), name="k")
+    B = tvm.te.compute((), lambda: tvm.te.sum(A[k], k), name="B")
+
+    return [A, B]
+
+
+@auto_scheduler.register_workload
+def zero_rank_compute_auto_scheduler_test(N):
+    A = tvm.te.placeholder((N,), name="A")
+    B = tvm.te.compute((), lambda: A[0], name="B")
+
     return [A, B]
 
 
@@ -251,18 +264,3 @@ def get_tiled_matmul():
     )
 
     return dag, s0
-
-
-class PropagatingThread(threading.Thread):
-    def run(self):
-        self.exc = None
-        try:
-            self.ret = self._target(*self._args, **self._kwargs)
-        except BaseException as e:
-            self.exc = e
-
-    def join(self):
-        super(PropagatingThread, self).join()
-        if self.exc:
-            raise self.exc
-        return self.ret

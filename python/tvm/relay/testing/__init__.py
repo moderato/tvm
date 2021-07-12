@@ -22,9 +22,9 @@ import numpy as np
 
 import tvm
 from tvm import te
-import tvm.relay as relay
-import tvm.relay.op as op
-from tvm.relay import Prelude
+from tvm import relay
+from tvm.relay import op
+from tvm.relay.prelude import Prelude
 from tvm.testing import enabled_targets
 
 from . import mlp
@@ -134,12 +134,12 @@ def check_grad(
     if test_inputs is None:
         test_inputs = inputs
 
-    for target, ctx in enabled_targets():
-        intrp = relay.create_executor(ctx=ctx, target=target)
+    for target, dev in enabled_targets():
+        intrp = relay.create_executor(device=dev, target=target)
 
         # Get analytic gradients.
         _, grads = intrp.evaluate(bwd_func)(*inputs)
-        grads = [grad.asnumpy().astype("float64") for grad in grads]
+        grads = [grad.numpy().astype("float64") for grad in grads]
 
         # Throw out gradients we aren't testing
         if inputs != test_inputs:
@@ -161,9 +161,9 @@ def check_grad(
             for i in np.ndindex(*x.shape):
                 x_i = x[i]
                 x[i] = x_i + eps
-                fwd_plus = intrp.evaluate(fwd_func)(*inputs).asnumpy().astype("float64")
+                fwd_plus = intrp.evaluate(fwd_func)(*inputs).numpy().astype("float64")
                 x[i] = x_i - eps
-                fwd_minus = intrp.evaluate(fwd_func)(*inputs).asnumpy().astype("float64")
+                fwd_minus = intrp.evaluate(fwd_func)(*inputs).numpy().astype("float64")
                 x[i] = x_i
                 approx_grad[i] = np.sum((fwd_plus - fwd_minus) / (2 * eps))
             approx_grads.append(approx_grad)

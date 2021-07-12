@@ -37,7 +37,7 @@ def _schedule_reduce(op, sch, is_idx_reduce=False):
         all_reduce = False
         num_thread = 32
         target = tvm.target.Target.current()
-        if target and target.kind.name == "opencl":
+        if target and (target.kind.name == "opencl" or target.kind.name == "metal"):
             # without it, CL_INVALID_WORK_GROUP_SIZE occurred when running test_topi_reduce.py
             # don't know why
             num_thread = 16
@@ -130,12 +130,14 @@ def schedule_reduce(outs):
             for tensor in operator.input_tensors:
                 traverse_after_reduce(tensor.op)
         elif operator.tag == "comm_reduce":
-            _schedule_reduce(operator, sch, is_idx_reduce=False)
+            if operator not in scheduled_ops:
+                _schedule_reduce(operator, sch, is_idx_reduce=False)
             for tensor in operator.input_tensors:
                 if tensor.op not in scheduled_ops:
                     traverse_before_reduce(tensor.op)
         elif operator.tag == "comm_reduce_idx":
-            _schedule_reduce(operator, sch, is_idx_reduce=True)
+            if operator not in scheduled_ops:
+                _schedule_reduce(operator, sch, is_idx_reduce=True)
             input_tensors = operator.input_tensors[0].op.input_tensors
             for tensor in input_tensors:
                 if tensor.op not in scheduled_ops:
@@ -147,5 +149,6 @@ def schedule_reduce(outs):
 
         scheduled_ops.append(operator)
 
-    traverse_after_reduce(outs[0].op)
+    for out in outs:
+        traverse_after_reduce(out.op)
     return sch

@@ -85,17 +85,23 @@ set(USE_MICRO OFF)
 # Whether enable RPC runtime
 set(USE_RPC ON)
 
+# Whether to build the C++ RPC server binary
+set(USE_CPP_RPC OFF)
+
+# Whether to build the iOS RPC server application
+set(USE_IOS_RPC OFF)
+
 # Whether embed stackvm into the runtime
 set(USE_STACKVM_RUNTIME OFF)
 
-# Whether enable tiny embedded graph runtime.
-set(USE_GRAPH_RUNTIME ON)
+# Whether enable tiny embedded graph executor.
+set(USE_GRAPH_EXECUTOR ON)
 
-# Whether enable additional graph debug functions
-set(USE_GRAPH_RUNTIME_DEBUG ON)
+# Whether enable tiny graph executor with CUDA Graph
+set(USE_GRAPH_EXECUTOR_CUDA_GRAPH OFF)
 
-# Whether enable additional vm profiler functions
-set(USE_VM_PROFILER OFF)
+# Whether to enable the profiler for the graph executor and vm
+set(USE_PROFILER ON)
 
 # Whether enable uTVM standalone runtime
 set(USE_MICRO_STANDALONE_RUNTIME OFF)
@@ -156,8 +162,20 @@ set(USE_TFLITE OFF)
 # /path/to/tensorflow: tensorflow root path when use tflite library
 set(USE_TENSORFLOW_PATH none)
 
-# Whether use CuDNN
-set(USE_CUDNN ON)
+# Required for full builds with TFLite. Not needed for runtime with TFLite.
+# /path/to/flatbuffers: flatbuffers root path when using tflite library
+set(USE_FLATBUFFERS_PATH none)
+
+# Possible values:
+# - OFF: disable tflite support for edgetpu
+# - /path/to/edgetpu: use specific path to edgetpu library
+set(USE_EDGETPU OFF)
+
+# Possible values:
+# - ON: enable cuDNN with cmake's auto search in CUDA directory
+# - OFF: disable cuDNN
+# - /path/to/cudnn: use specific path to cuDNN path
+set(USE_CUDNN OFF)
 
 # Whether use cuBLAS
 set(USE_CUBLAS OFF)
@@ -172,7 +190,34 @@ set(USE_MPS OFF)
 set(USE_ROCBLAS OFF)
 
 # Whether use contrib sort
-set(USE_SORT OFF)
+set(USE_SORT ON)
+
+# Whether use MKL-DNN (DNNL) codegen
+set(USE_DNNL_CODEGEN OFF)
+
+# Whether to use Arm Compute Library (ACL) codegen
+# We provide 2 separate flags since we cannot build the ACL runtime on x86.
+# This is useful for cases where you want to cross-compile a relay graph
+# on x86 then run on AArch.
+#
+# An example of how to use this can be found here: docs/deploy/arm_compute_lib.rst.
+#
+# USE_ARM_COMPUTE_LIB - Support for compiling a relay graph offloading supported
+#                       operators to Arm Compute Library. OFF/ON
+# USE_ARM_COMPUTE_LIB_GRAPH_EXECUTOR - Run Arm Compute Library annotated functions via the ACL
+#                                     runtime. OFF/ON/"path/to/ACL"
+set(USE_ARM_COMPUTE_LIB OFF)
+set(USE_ARM_COMPUTE_LIB_GRAPH_EXECUTOR OFF)
+
+# Whether to build with Arm Ethos-N support
+# Possible values:
+# - OFF: disable Arm Ethos-N support
+# - path/to/arm-ethos-N-stack: use a specific version of the
+#   Ethos-N driver stack
+set(USE_ETHOSN OFF)
+# If USE_ETHOSN is enabled, use ETHOSN_HW (ON) if Ethos-N hardware is available on this machine
+# otherwise use ETHOSN_HW (OFF) to use the software test infrastructure
+set(USE_ETHOSN_HW OFF)
 
 # Whether to build with TensorRT codegen or runtime
 # Examples are available here: docs/deploy/tensorrt.rst.
@@ -187,8 +232,8 @@ set(USE_TENSORRT_RUNTIME OFF)
 # Whether use VITIS-AI codegen
 set(USE_VITIS_AI OFF)
 
-# Build Verilator codegen and runtime, example located in 3rdparty/vta-hw/apps/verilator
-set(USE_VERILATOR_HW OFF)
+# Build Verilator codegen and runtime
+set(USE_VERILATOR OFF)
 
 # Build ANTLR parser for Relay text format
 # Possible values:
@@ -224,3 +269,27 @@ set(USE_HEXAGON_SDK /path/to/sdk)
 
 # Whether to use ONNX codegen
 set(USE_TARGET_ONNX OFF)
+
+# Whether enable BNNS runtime
+set(USE_BNNS OFF)
+
+# Whether to use libbacktrace
+# Libbacktrace provides line and column information on stack traces from errors.
+# It is only supported on linux and macOS.
+# Possible values:
+# - AUTO: auto set according to system information and feasibility
+# - ON: enable libbacktrace
+# - OFF: disable libbacktrace
+set(USE_LIBBACKTRACE AUTO)
+
+# Whether to build static libtvm_runtime.a, the default is to build the dynamic
+# version: libtvm_runtime.so.
+#
+# The static runtime library needs to be linked into executables with the linker
+# option --whole-archive (or its equivalent). The reason is that the TVM registry
+# mechanism relies on global constructors being executed at program startup.
+# Global constructors alone are not sufficient for the linker to consider a
+# library member to be used, and some of such library members (object files) may
+# not be included in the final executable. This would make the corresponding
+# runtime functions to be unavailable to the program.
+set(BUILD_STATIC_RUNTIME OFF)

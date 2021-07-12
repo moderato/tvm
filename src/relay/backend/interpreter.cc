@@ -32,6 +32,7 @@
 #include <tvm/runtime/device_api.h>
 #include <tvm/runtime/object.h>
 
+#include "../transforms/pass_utils.h"
 #include "compile_engine.h"
 
 namespace tvm {
@@ -212,8 +213,8 @@ InterpreterState::InterpreterState(Expr current_expr, InterpreterState::Stack st
 class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
                     PatternFunctor<bool(const Pattern& p, const ObjectRef& v)> {
  public:
-  Interpreter(IRModule mod, DLContext context, Target target)
-      : mod_(mod), context_(context), target_(target), debug_op_(Op::Get("debug")) {
+  Interpreter(IRModule mod, Device device, Target target)
+      : mod_(mod), device_(device), target_(target), debug_op_(Op::Get("debug")) {
     engine_ = CompileEngine::Global();
   }
 
@@ -243,7 +244,7 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
     return ObjectRef();
   }
 
-  ObjectRef VisitExpr_(const ConstantNode* op) final { return op->data.CopyTo(context_); }
+  ObjectRef VisitExpr_(const ConstantNode* op) final { return op->data.CopyTo(device_); }
 
   ObjectRef VisitExpr_(const TupleNode* op) final {
     std::vector<ObjectRef> values;
@@ -294,9 +295,9 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
     std::vector<NDArray> inputs(cfunc->inputs.size());
     std::vector<NDArray> outputs(cfunc->outputs.size());
 
-    DLContext cpu_ctx;
-    cpu_ctx.device_type = kDLCPU;
-    cpu_ctx.device_id = 0;
+    Device cpu_dev;
+    cpu_dev.device_type = kDLCPU;
+    cpu_dev.device_id = 0;
 
     auto fset_input = [&](size_t i, ObjectRef val, bool need_shape) {
       auto nd_array = Downcast<NDArray>(val);
@@ -304,9 +305,9 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
         int64_t ndim = nd_array.Shape().size();
         NDArray shape_arr;
         if (ndim == 0) {
-          shape_arr = NDArray::Empty({}, DataType::Int(64), cpu_ctx);
+          shape_arr = NDArray::Empty({}, DataType::Int(64), cpu_dev);
         } else {
-          shape_arr = NDArray::Empty({ndim}, DataType::Int(64), cpu_ctx);
+          shape_arr = NDArray::Empty({ndim}, DataType::Int(64), cpu_dev);
           int64_t* data = reinterpret_cast<int64_t*>(shape_arr->data);
           for (auto j = 0; j < ndim; ++j) {
             data[j] = nd_array.Shape()[j];
@@ -315,7 +316,7 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
         inputs[i] = shape_arr;
         setter(i, shape_arr);
       } else {
-        auto arr = nd_array.CopyTo(cpu_ctx);
+        auto arr = nd_array.CopyTo(cpu_dev);
         inputs[i] = arr;
         setter(i, arr);
       }
@@ -354,7 +355,7 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
       const TensorTypeNode* rtype = val_type.as<TensorTypeNode>();
       ICHECK(rtype != nullptr);
       int64_t ndim = rtype->shape.size();
-      auto arr = NDArray::Empty({ndim}, DataType::Int(64), cpu_ctx);
+      auto arr = NDArray::Empty({ndim}, DataType::Int(64), cpu_dev);
       outputs[i] = arr;
       setter(arg_counter + i, arr);
     };
@@ -381,7 +382,7 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
     } else {
       m = build(cfunc->funcs, cfunc->target, Target(nullptr));
     }
-    shape_func = m.GetFunction(cfunc->func_name);
+    shape_func = m.GetFunction(cfunc->prim_fn_var->name_hint);
     shape_func.CallPacked(TVMArgs(values.data(), codes.data(), arity), &rv);
 
     // Get output shapes
@@ -438,9 +439,9 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
     auto fset_input = [&](size_t i, ObjectRef val) {
       const auto nd_array = Downcast<NDArray>(val);
       setter(i, nd_array);
-      DLContext arg_ctx = nd_array->ctx;
-      ICHECK(arg_ctx.device_type == context_.device_type && arg_ctx.device_id == context_.device_id)
-          << "Interpreter expect context to be " << context_ << ", but get " << arg_ctx;
+      Device arg_dev = nd_array->device;
+      ICHECK(arg_dev.device_type == device_.device_type && arg_dev.device_id == device_.device_id)
+          << "Interpreter expect device to be " << device_ << ", but get " << arg_dev;
     };
 
     int arg_counter = 0;
@@ -470,7 +471,7 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
         shape.push_back(ivalue[0]);
       }
       DLDataType dtype = rtype->dtype;
-      NDArray nd_array = NDArray::Empty(shape, dtype, context_);
+      NDArray nd_array = NDArray::Empty(shape, dtype, device_);
       setter(num_inputs + i, nd_array);
       return nd_array;
     };
@@ -603,10 +604,10 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
     ObjectRef v = Eval(op->cond);
     if (v->IsInstance<NDArray::ContainerType>()) {
       auto nd_array = Downcast<NDArray>(v);
-      DLContext cpu_ctx;
-      cpu_ctx.device_type = kDLCPU;
-      cpu_ctx.device_id = 0;
-      NDArray cpu_array = nd_array.CopyTo(cpu_ctx);
+      Device cpu_dev;
+      cpu_dev.device_type = kDLCPU;
+      cpu_dev.device_id = 0;
+      NDArray cpu_array = nd_array.CopyTo(cpu_dev);
       ICHECK_EQ(DataType(cpu_array->dtype), DataType::Bool());
       // TODO(@jroesch, @MK): Refactor code into helper from DCE.
       if (reinterpret_cast<uint8_t*>(cpu_array->data)[0]) {
@@ -704,7 +705,7 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
   IRModule mod_;
   // For simplicity we only run the interpreter on a single context.
   // Context to run the interpreter on.
-  DLContext context_;
+  Device device_;
   // Target parameter being used by the interpreter.
   Target target_;
   // Object stack.
@@ -715,7 +716,7 @@ class Interpreter : public ExprFunctor<ObjectRef(const Expr& n)>,
   const Op& debug_op_;
 };
 
-TypedPackedFunc<ObjectRef(Expr)> CreateInterpreter(IRModule mod, DLContext context, Target target) {
+TypedPackedFunc<ObjectRef(Expr)> CreateInterpreter(IRModule mod, Device device, Target target) {
   if (mod.defined()) {
     // eta expand to support constructors in argument position
     transform::Sequential seq({transform::EtaExpand(
@@ -727,7 +728,7 @@ TypedPackedFunc<ObjectRef(Expr)> CreateInterpreter(IRModule mod, DLContext conte
     mod = seq(mod);
   }
 
-  auto intrp = std::make_shared<Interpreter>(mod, context, target);
+  auto intrp = std::make_shared<Interpreter>(mod, device, target);
   auto packed = [intrp](Expr expr) {
     auto f = DetectFeature(expr);
     ICHECK(f.is_subset_of(FeatureSet::All() - fGraph));
