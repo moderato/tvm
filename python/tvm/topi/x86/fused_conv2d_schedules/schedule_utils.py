@@ -1,3 +1,5 @@
+import tvm
+
 def cpu_schedules(name, is_autotvm=True, tuning=False):
     # TODO: Don't use workload name to select the schedule
     if is_autotvm:
@@ -28,3 +30,16 @@ def cpu_schedules(name, is_autotvm=True, tuning=False):
         else: # resnet block, etc
             from .block_fused_schedule import schedule_block_fused_nhwc as f
     return f
+
+
+def get_layer_cfg():
+    assert tvm.topi.FUSION_COMPOSER is not None
+    inputs_cfg = {}
+    filters_cfg = {}
+    outputs_cfg = {}
+    for l in range(tvm.topi.FUSION_COMPOSER.layer_num):
+        inputs_cfg['Layer_{}'.format(l)] = tvm.topi.FUSION_COMPOSER.get_input_cfg(l)
+        filters_cfg['Layer_{}'.format(l)] = tvm.topi.FUSION_COMPOSER.get_filter_cfg(l)
+        outputs_cfg['Layer_{}'.format(l)] = tvm.topi.FUSION_COMPOSER.get_output_cfg(l)
+
+    return inputs_cfg, filters_cfg, outputs_cfg

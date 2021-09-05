@@ -502,12 +502,14 @@ class FeatureConfig:
         self.vlen = vlen
         C_chunk = tvm.tir.indexdiv(self.C, vlen).value
         self.shape = (self.N, C_chunk, self.H, self.W, vlen)
-    def get_shape(self):
+    def get_shape(self, raw=False, layout='NHWC'):
+        if raw:
+            return (self.N, self.H, self.W, self.C) if layout == 'NHWC' else (self.N, self.C, self.H, self.W) # NCHW
         return self.shape
 
 
 class FilterConfig:
-    def __init__(self, H, W, I, O, stride_h, stride_w, depthwise, post_op, dilation=1, padding='SAME'):
+    def __init__(self, H, W, I, O, stride_h, stride_w, depthwise, post_op, dilation=1, padding='SAME', layout='NHWC'):
         assert post_op in [None, 'bias', 'relu', 'relu6', 'sigmoid']
         self.H = int(H)
         self.W = int(W)
@@ -534,7 +536,12 @@ class FilterConfig:
         IC_chunk = tvm.tir.indexdiv(self.I, vlen_i).value
         OC_chunk = tvm.tir.indexdiv(self.O, vlen_o).value
         self.shape = (OC_chunk, IC_chunk, self.H, self.W, vlen_i, vlen_o) if not self.depthwise else (OC_chunk, 1, self.H, self.W, 1, vlen_o)
-    def get_shape(self):
+    def get_shape(self, raw=False, layout='NHWC'):
+        if raw:
+            if layout == 'NHWC':
+                return (int(self.H), int(self.W), int(self.O), int(self.I)) if self.depthwise else (int(self.H), int(self.W), int(self.I), int(self.O))
+            else: # NCHW
+                return (int(self.O), int(self.I), int(self.H), int(self.W))
         return self.shape
     def get_padding_shape(self):
         assert(self.padding_shape is not None)
@@ -568,18 +575,18 @@ def get_4D_shapes_from_params(p):
             break
 
         if not OUTPUT:
-            DATA = FeatureConfig(*p[idx:(idx+4)])
+            FEATURE = FeatureConfig(*p[idx:(idx+4)])
             idx += 4
         else:
-            DATA = OUTPUT
+            FEATURE = OUTPUT
 
         is_depthwise = p[idx+3]
-        # Depthwise: I: 1 (channel_multiplier), O: same as data's C
-        # Normal: I: same as data's C, O: same as output's C
-        FILTER = FilterConfig(p[idx], p[idx], 1 if is_depthwise else DATA.C, DATA.C if is_depthwise else p[idx+1],\
+        # Depthwise: I: 1 (channel_multiplier), O: same as FEATURE's C
+        # Normal: I: same as FEATURE's C, O: same as output's C
+        FILTER = FilterConfig(p[idx], p[idx], 1 if is_depthwise else FEATURE.C, FEATURE.C if is_depthwise else p[idx+1],\
                                     p[idx+2], *p[(idx+2):(idx+5)])
         idx += 5
-        layers.append((DATA, FILTER))
+        layers.append((FEATURE, FILTER))
 
         # Compute the output shape with the original input size, i.e. WITHOUT INPUT PACKING
         dilated_kernel_h = (FILTER.H - 1) * FILTER.dilation_h + 1
@@ -590,9 +597,9 @@ def get_4D_shapes_from_params(p):
             FILTER.padding_shape = (pad_top, pad_left, pad_down, pad_right)
 
         # Make output
-        ON = DATA.N
-        OH = simplify((DATA.H - dilated_kernel_h + pad_top + pad_down) // FILTER.stride_h + 1)
-        OW = simplify((DATA.W - dilated_kernel_w + pad_left + pad_right) // FILTER.stride_w + 1)
+        ON = FEATURE.N
+        OH = simplify((FEATURE.H - dilated_kernel_h + pad_top + pad_down) // FILTER.stride_h + 1)
+        OW = simplify((FEATURE.W - dilated_kernel_w + pad_left + pad_right) // FILTER.stride_w + 1)
         OC = FILTER.I * FILTER.O if FILTER.depthwise else FILTER.O
         OUTPUT = FeatureConfig(ON, OH, OW, OC)
 
@@ -676,7 +683,7 @@ def get_CPU_vlen_from_config(best_config=None, cfg_key=''):
         return vlens
 
 
-def get_fusion_parameters_from_fused_conv2d_attrs(attrs, inputs):
+def attrs_to_fusion_param(attrs, inputs):
     import re
     _NCHWc_matcher = re.compile("^NCHW[0-9]+c$")
     param = []
@@ -707,6 +714,57 @@ def get_fusion_parameters_from_fused_conv2d_attrs(attrs, inputs):
         param.append(attrs.strides_array[l][0])
         param.append(bool(attrs.groups_array[l] > 1))
         param.append(attrs.post_op_array[l])
+    param.append(False)
+
+    return param
+
+
+def tensors_to_fusion_param(num_layers, Input, Filters, strides, is_dws, post_ops, layouts):
+    """
+        Accept Input and Filters as either te.Tensor or tuple
+    """
+    import re
+    _NCHWc_matcher = re.compile("^NCHW[0-9]+c$")
+    param = []
+
+    for l in range(num_layers):
+        layout = layouts[l]
+        Filter = Filters[l]
+        input_shape = Input.shape if isinstance(Input, te.Tensor) else Input
+        filter_shape = Filter.shape if isinstance(Filter, te.Tensor) else Filter
+        if layout == 'NHWC':
+            if l == 0:
+                param.append(input_shape[0])
+                param.append(input_shape[1])
+                param.append(input_shape[2])
+                param.append(input_shape[3])
+            h, _, _, cm_or_oc = filter_shape # Channel multiplier or OC
+        elif layout == 'NCHW':
+            if l == 0:
+                param.append(input_shape[0])
+                param.append(input_shape[2])
+                param.append(input_shape[3])
+                param.append(input_shape[1])
+            cm_or_oc, _, h, _ = filter_shape
+        elif _NCHWc_matcher.match(layout):
+            if l == 0:
+                param.append(input_shape[0])
+                param.append(input_shape[2])
+                param.append(input_shape[3])
+                param.append(input_shape[1] * input_shape[4])
+            oc_chunk, _, h, _, _, vec = filter_shape
+            if is_dws[l]:
+                cm_or_oc = 1
+            else:
+                cm_or_oc = oc_chunk * vec
+        else:
+            raise Exception("Layout {} is not supported!".format(layout))
+
+        param.append(h)
+        param.append(cm_or_oc)
+        param.append(strides[l][0])
+        param.append(is_dws[l])
+        param.append(post_ops[l])
     param.append(False)
 
     return param
@@ -762,12 +820,12 @@ def get_stages_and_cfgs(s, outs):
                 if 'PaddedInput' in name:
                     stage_dict[name] = t
                 elif 'BiasAdd' in name or 'ReLU' in name or 'ReLU6' in name or 'Sigmoid' in name:
-                    n, i = name.split('_')
+                    _, n, i = name.split('_')
                     stage_dict['Output_{}_{}'.format(i, n)] = t
                 elif 'Bias' in name or 'Filter' in name:
                     param_dict[name] = t
                 elif 'Conv2dOutput' in name:
-                    _, i = name.split('_')
+                    i = name.split('_')[-1]
                     stage_dict['Output_{}'.format(i)] = t
                 elif 'Input' in name:
                     if 'PaddedInput_0' not in stage_dict.keys():
@@ -814,7 +872,7 @@ def get_stages_and_cfgs(s, outs):
             post_ops.append(None)
             layer_output_dict['Layer_{}'.format(idx)] = stage_dict['Output_{}'.format(idx)]
 
-        if 'PaddedInput_{}'.format(idx) in stage_dict.keys():
+        if 'FusedConv2D_PaddedInput_{}'.format(idx) in stage_dict.keys():
             padded.append(True)
         else:
             padded.append(False)

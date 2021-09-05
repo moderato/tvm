@@ -58,6 +58,9 @@ from . import hls
 # error reporting
 from .utils import InvalidShapeError
 
+# global fusion composer
+from .fusion_composer import FUSION_COMPOSER
+
 # not import testing by default
 # because testing can have extra deps that are not necessary
 # we can import them from test cases explicitly

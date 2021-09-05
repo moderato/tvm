@@ -1,16 +1,16 @@
+import tvm
 from tvm import te
 from tvm.topi.utils import get_stages_and_cfgs
 from .libxsmm_intrin import intrin_libxsmm_brgemm
+from .schedule_utils import get_layer_cfg
 
 # Currently, schedule with relu is not able to get the best search result. Use the non-relu schedule to search and apply the result to the relu schedule for inference.
 # Separate search and inference, and give a little twist to the inference schedule.
-def schedule_depth_conv_fused_nchwc_auto_search(cfg, outs, *args, **kwargs):
+def schedule_depth_conv_fused_nchwc_auto_search(cfg, outs):
     outs = [outs] if isinstance(outs, te.tensor.Tensor) else outs
     s = te.create_schedule([x.op for x in outs])
     stage_dict, layer_output_dict, _, _, _, hasPaddedInput = get_stages_and_cfgs(s, outs)
-    inputs_cfg = kwargs['inputs_cfg']
-    filters_cfg = kwargs['filters_cfg']
-    outputs_cfg = kwargs['outputs_cfg']
+    inputs_cfg, filters_cfg, outputs_cfg = get_layer_cfg()
     axis = ['oc', 'ic', 'h', 'w', 'root'][cfg['bind_axis'].val]
 
     n, oc_chunk, h, w, oc = s[layer_output_dict['Layer_1']].op.axis
@@ -82,20 +82,18 @@ def schedule_depth_conv_fused_nchwc_auto_search(cfg, outs, *args, **kwargs):
 
     ######## PaddedInput 0
     if hasPaddedInput[0]:
-        s[stage_dict['PaddedInput_0']].compute_inline()
+        s[stage_dict['FusedConv2D_PaddedInput_0']].compute_inline()
 
     s = s.normalize()
 
     return s
 
 
-def schedule_depth_conv_fused_nchwc_auto_inference(cfg, outs, *args, **kwargs):
+def schedule_depth_conv_fused_nchwc_auto_inference(cfg, outs):
     outs = [outs] if isinstance(outs, te.tensor.Tensor) else outs
     s = te.create_schedule([x.op for x in outs])
     stage_dict, layer_output_dict, _, _, post_ops, hasPaddedInput = get_stages_and_cfgs(s, outs)
-    inputs_cfg = kwargs['inputs_cfg']
-    filters_cfg = kwargs['filters_cfg']
-    outputs_cfg = kwargs['outputs_cfg']
+    inputs_cfg, filters_cfg, outputs_cfg = get_layer_cfg()
     axis = ['oc', 'ic', 'h', 'w', 'root'][cfg['bind_axis'].val]
 
     ######## Final output
@@ -217,6 +215,6 @@ def schedule_depth_conv_fused_nchwc_auto_inference(cfg, outs, *args, **kwargs):
 
     ######## PaddedInput 0
     if hasPaddedInput[0]:
-        s[stage_dict['PaddedInput_0']].compute_inline()
+        s[stage_dict['FusedConv2D_PaddedInput_0']].compute_inline()
 
     return s

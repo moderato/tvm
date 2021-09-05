@@ -87,8 +87,21 @@ def deserialize_args(args):
     """
     ret = []
     for t in args:
-        if isinstance(t, tuple) and t[0] == "TENSOR":
-            ret.append(placeholder(shape=t[1], dtype=t[2]))
+        if isinstance(t, tuple):
+            if t[0] == "TENSOR":
+                ret.append(placeholder(shape=t[1], dtype=t[2]))
+            else:
+                # check tuple of tuple
+                tuple_of_tuple = True
+                for tt in t:
+                    tuple_of_tuple &= (isinstance(tt, tuple) and tt[0] == "TENSOR")
+                if tuple_of_tuple:
+                    tmp = []
+                    for tt in t:
+                        tmp.append(placeholder(shape=tt[1], dtype=tt[2]))
+                    ret.append(tuple(tmp))
+                else:
+                    ret.append(t)
         else:
             ret.append(t)
     return ret

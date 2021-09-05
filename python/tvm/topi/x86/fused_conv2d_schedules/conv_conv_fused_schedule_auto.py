@@ -1,14 +1,13 @@
 from tvm import te
 from tvm.topi.utils import get_stages_and_cfgs
 from .libxsmm_intrin import intrin_libxsmm_brgemm
+from .schedule_utils import get_layer_cfg
 
-def schedule_conv_conv_fused_nchwc_auto_search(cfg, outs, *args, **kwargs):
+def schedule_conv_conv_fused_nchwc_auto_search(cfg, outs):
     outs = [outs] if isinstance(outs, te.tensor.Tensor) else outs
     s = te.create_schedule([x.op for x in outs])
     stage_dict, layer_output_dict, _, _, _, hasPaddedInput = get_stages_and_cfgs(s, outs)
-    inputs_cfg = kwargs['inputs_cfg']
-    filters_cfg = kwargs['filters_cfg']
-    outputs_cfg = kwargs['outputs_cfg']
+    inputs_cfg, filters_cfg, outputs_cfg = get_layer_cfg()
     axis = ['oc', 'ic', 'h', 'w', 'root'][cfg['bind_axis'].val]
 
     ######## Final output
@@ -69,7 +68,7 @@ def schedule_conv_conv_fused_nchwc_auto_search(cfg, outs, *args, **kwargs):
     else:
         bind_axis = fused_blx
     if hasPaddedInput[1]:
-        s[stage_dict['PaddedInput_1']].compute_at(s[layer_output_dict['Layer_1']], bind_axis)
+        s[stage_dict['FusedConv2D_PaddedInput_1']].compute_at(s[layer_output_dict['Layer_1']], bind_axis)
     s[layer_output_dict['Layer_0']].compute_at(s[layer_output_dict['Layer_1']], bind_axis)
 
     ######## Intermediate output
@@ -115,19 +114,17 @@ def schedule_conv_conv_fused_nchwc_auto_search(cfg, outs, *args, **kwargs):
                                                 inputs_cfg['Layer_0'].C)
     s[layer_output_dict['Layer_0']].tensorize(tensorize_axis, libxsmm_tensorize)
     if hasPaddedInput[0]:
-        s[stage_dict['PaddedInput_0']].compute_at(s[layer_output_dict['Layer_1']], bind_axis)
+        s[stage_dict['FusedConv2D_PaddedInput_0']].compute_at(s[layer_output_dict['Layer_1']], bind_axis)
 
     s = s.normalize()
 
     return s
 
-def schedule_conv_conv_fused_nchwc_auto_inference(cfg, outs, *args, **kwargs):
+def schedule_conv_conv_fused_nchwc_auto_inference(cfg, outs):
     outs = [outs] if isinstance(outs, te.tensor.Tensor) else outs
     s = te.create_schedule([x.op for x in outs])
     stage_dict, layer_output_dict, _, _, post_ops, hasPaddedInput = get_stages_and_cfgs(s, outs)
-    inputs_cfg = kwargs['inputs_cfg']
-    filters_cfg = kwargs['filters_cfg']
-    outputs_cfg = kwargs['outputs_cfg']
+    inputs_cfg, filters_cfg, outputs_cfg = get_layer_cfg()
     axis = ['oc', 'ic', 'h', 'w', 'root'][cfg['bind_axis'].val]
 
     ######## Final output
@@ -234,7 +231,7 @@ def schedule_conv_conv_fused_nchwc_auto_inference(cfg, outs, *args, **kwargs):
     else:
         bind_axis = fused_blx
     if hasPaddedInput[1]:
-        s[stage_dict['PaddedInput_1']].compute_at(s[prev_consumer], bind_axis)
+        s[stage_dict['FusedConv2D_PaddedInput_1']].compute_at(s[prev_consumer], bind_axis)
 
     ######## Intermediate output
     s[layer_output_dict['Layer_0']].compute_at(s[prev_consumer], bind_axis)
@@ -281,7 +278,7 @@ def schedule_conv_conv_fused_nchwc_auto_inference(cfg, outs, *args, **kwargs):
                                                 inputs_cfg['Layer_0'].C)
     s[stage_dict['Output_0']].tensorize(tensorize_axis, libxsmm_tensorize)
     if hasPaddedInput[0]:
-        s[stage_dict['PaddedInput_0']].compute_at(s[prev_consumer], bind_axis)
+        s[stage_dict['FusedConv2D_PaddedInput_0']].compute_at(s[prev_consumer], bind_axis)
 
     s = s.normalize()
 

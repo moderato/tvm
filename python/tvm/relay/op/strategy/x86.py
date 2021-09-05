@@ -228,6 +228,18 @@ def depthwise_conv2d_NCHWc_strategy_cpu(attrs, inputs, out_type, target):
     return strategy
 
 
+@fused_conv2d_strategy.register("cpu")
+def fused_conv2d_strategy_cpu(attrs, inputs, out_type, target):
+    """fused_conv2d x86 strategy"""
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_fused_conv2d(topi.x86.fused_conv2d),
+        wrap_schedule_fused_conv2d(topi.x86.schedule_fused_conv2d),
+        name="fused_conv2d.x86",
+    )
+    return strategy
+
+
 @conv2d_transpose_strategy.register("cpu")
 def conv2d_transpose_strategy_cpu(attrs, inputs, out_type, target):
     """conv2d_transpose x86 strategy"""

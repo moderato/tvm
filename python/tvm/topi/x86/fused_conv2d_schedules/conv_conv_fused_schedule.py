@@ -1,14 +1,13 @@
 from tvm import te
 from tvm.topi.utils import get_stages_and_cfgs
 from .libxsmm_intrin import intrin_libxsmm_brgemm
+from .schedule_utils import get_layer_cfg
 
-def schedule_conv_conv_fused_nchwc(outs, *args, **kwargs):
+def schedule_conv_conv_fused_nchwc(outs):
     outs = [outs] if isinstance(outs, te.tensor.Tensor) else outs
     s = te.create_schedule([x.op for x in outs])
     stage_dict, layer_output_dict, _, _, post_ops, hasPaddedInput = get_stages_and_cfgs(s, outs)
-    inputs_cfg = kwargs['inputs_cfg']
-    filters_cfg = kwargs['filters_cfg']
-    outputs_cfg = kwargs['outputs_cfg']
+    inputs_cfg, filters_cfg, outputs_cfg = get_layer_cfg()
 
     ######## Searchable parameters
     # -------------------- res_3x
@@ -57,11 +56,11 @@ def schedule_conv_conv_fused_nchwc(outs, *args, **kwargs):
     if (((filters_cfg['Layer_1'].H == 1 and filters_cfg['Layer_1'].W == 1 and \
             filters_cfg['Layer_1'].stride_h == 1 and filters_cfg['Layer_1'].stride_w == 1)) and \
         (step_num_h > 1 and output_step_tile_size_w == outputs_cfg['Layer_1'].W)): # HM > 1 & WI = OW (small W)
-        print('small: bind to h')
+        # print('small: bind to h')
         tensorize_axis = h
         block_output_height = output_step_tile_size_h
     else:
-        print('big: bind to ic_chunk_i')
+        # print('big: bind to ic_chunk_i')
         tensorize_axis = ic_chunk_i
         block_output_height = 1
 
@@ -83,10 +82,10 @@ def schedule_conv_conv_fused_nchwc(outs, *args, **kwargs):
 
     ######## Intermediate output
     if hasPaddedInput[1]:
-        s[stage_dict['PaddedInput_1']].compute_at(s[stage_dict['Output_1']], fused_blx)
+        s[stage_dict['FusedConv2D_PaddedInput_1']].compute_at(s[stage_dict['Output_1']], fused_blx)
     s[layer_output_dict['Layer_0']].compute_at(s[stage_dict['Output_1']], fused_blx)
     if hasPaddedInput[0]:
-        s[stage_dict['PaddedInput_0']].compute_at(s[stage_dict['Output_1']], fused_blx)
+        s[stage_dict['FusedConv2D_PaddedInput_0']].compute_at(s[stage_dict['Output_1']], fused_blx)
     n, oc_chunk, h, w, oc = s[layer_output_dict['Layer_0']].op.axis
     if post_ops[0]:
         s[layer_output_dict['Layer_0']].vectorize(oc)
@@ -103,11 +102,11 @@ def schedule_conv_conv_fused_nchwc(outs, *args, **kwargs):
     if (((filters_cfg['Layer_0'].H == 1 and filters_cfg['Layer_0'].W == 1 and \
             filters_cfg['Layer_0'].stride_h == 1 and filters_cfg['Layer_0'].stride_w == 1)) and \
         (step_num_h > 1 and output_step_tile_size_w == outputs_cfg['Layer_0'].W)): # HM > 1 & WI = OW (small W)
-        print('small: bind to h')
+        # print('small: bind to h')
         tensorize_axis = h
         block_output_height = output_step_tile_size_h
     else:
-        print('big: bind to ic_chunk_i')
+        # print('big: bind to ic_chunk_i')
         tensorize_axis = ic_chunk_i
         block_output_height = 1
 

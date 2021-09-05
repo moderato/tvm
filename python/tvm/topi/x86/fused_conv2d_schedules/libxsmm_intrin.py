@@ -2,7 +2,7 @@
 # Modified from Intel Libxsmm's libxsmm_wrapper_test.py
 ##########
 
-import tvm, math
+import tvm
 from tvm import te
 
 def intrin_libxsmm_brgemm(

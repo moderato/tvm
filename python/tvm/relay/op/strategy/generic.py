@@ -19,8 +19,8 @@
 import logging
 
 import re
-from tvm import topi, _ffi, te, ir
-from tvm.topi.utils import get_const_int, get_const_float, get_const_tuple, get_float_tuple, get_fusion_parameters_from_fused_conv2d_attrs
+from tvm import _ffi, ir, te, topi
+from tvm.topi.utils import get_const_int, get_const_float, get_const_tuple, get_float_tuple
 from tvm.target import generic_func, override_native_generic_func
 from .. import op as _op
 
@@ -326,34 +326,49 @@ def depthwise_conv2d_NCHWc_strategy(attrs, inputs, out_type, target):
     return strategy
 
 
+def wrap_compute_fused_conv2d(topi_compute):
+    """Wrap conv2d fusion topi compute"""
+    # The API for compute in a strategy op is always FIXED (attrs, inputs, ret_type), while the computes for different ops are usually DIFFERENT.
+    # Needs to pull in all inputs (including every tensors involved in fusion) of the call.
+    def _compute_fused_conv2d(attrs, inputs, ret_type):
+        Input = inputs[0]
+        Filters, Biases = [], []
+        count = 0
+        for idx in range(1, len(inputs), 2):
+            Filters.append(inputs[idx])
+            Biases.append(inputs[idx+1])
+            count += 1
+        args = []
+        args.append(attrs.num_layers)
+        args.append(attrs.strides_array)
+        args.append(attrs.padding_array)
+        args.append(attrs.dilation_array)
+        args.append([False if g == 1 else True for g in attrs.groups_array])
+        args.append(attrs.post_op_array)
+        args.append(attrs.data_layout_array)
+        args.append(attrs.out_dtype)
+
+        return [topi_compute(Input, Filters, Biases, *args)]
+    return _compute_fused_conv2d
+
+
+def wrap_schedule_fused_conv2d(topi_schedule):
+    """Wrap fusion schedule"""
+    # The API for schedule in a strategy op is always FIXED (attrs, outs, target), while the schedules for different ops are usually DIFFERENT.
+    def wrapper(attrs, outs, target):
+        with target:
+            return topi_schedule(outs)
+    return wrapper
+
+
 # fused_conv2d
 @override_native_generic_func("fused_conv2d_strategy")
 def fused_conv2d_strategy(attrs, inputs, out_type, target):
-    """conv2d strategy (NHWC)"""
-    from tvm.topi.fusion_composer import FusionComposer
-
-    def wrap_compute_fused_conv2d(topi_compute):
-        """Wrap conv2d fusion topi compute"""
-        # The API for compute in a strategy op is always FIXED (attrs, inputs, ret_type), while the computes for different ops are usually DIFFERENT.
-        # Needs to pull in all inputs (including every tensors involved in fusion) of the call.
-        def _compute_fused_conv2d(attrs, inputs, ret_type):
-            return [topi_compute(inputs)]
-        return _compute_fused_conv2d
-
-    def wrap_schedule_fused_conv2d(topi_schedule):
-        """Wrap fusion schedule"""
-        # The API for schedule in a strategy op is always FIXED (attrs, outs, target), while the schedules for different ops are usually DIFFERENT.
-        def wrapper(attrs, outs, target):
-            with target:
-                return topi_schedule(outs)
-        return wrapper
-
-    parameters = get_fusion_parameters_from_fused_conv2d_attrs(attrs, inputs)
-    fc = FusionComposer(parameters, use_autotvm=True, target=target)
+    """fused_conv2d strategy"""
     strategy = _op.OpStrategy()
     strategy.add_implementation(
-        wrap_compute_fused_conv2d(fc.get_compute()),
-        wrap_schedule_fused_conv2d(fc.get_schedule(target=target)),
+        wrap_compute_fused_conv2d(topi.nn.fused_conv2d),
+        wrap_schedule_fused_conv2d(topi.generic.schedule_fused_conv2d),
         name="fused_conv2d")
     return strategy
 

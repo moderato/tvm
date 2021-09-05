@@ -411,6 +411,22 @@ def schedule_depthwise_conv2d_NCHWc(outs):
     return _default_schedule(outs, False)
 
 
+def schedule_fused_conv2d(outs):
+    """Schedule for fused_conv2d
+    Parameters
+    ----------
+    outs: Array of Tensor
+          The computation graph description of fused_conv2d
+          in the format of an array of tensors.
+
+    Returns
+    -------
+    sch: Schedule
+        The computation schedule for the op.
+    """
+    return _default_schedule(outs, False)
+
+
 def schedule_group_conv2d_nchw(outs):
     """Schedule for group_conv2d_nchw
 

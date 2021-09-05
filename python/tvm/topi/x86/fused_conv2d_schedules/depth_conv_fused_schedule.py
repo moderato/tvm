@@ -1,14 +1,13 @@
 from tvm import te
 from tvm.topi.utils import get_stages_and_cfgs
 from .libxsmm_intrin import intrin_libxsmm_brgemm
+from .schedule_utils import get_layer_cfg
 
-def schedule_depth_conv_fused_nchwc(outs, *args, **kwargs):
+def schedule_depth_conv_fused_nchwc(outs):
     outs = [outs] if isinstance(outs, te.tensor.Tensor) else outs
     s = te.create_schedule([x.op for x in outs])
     stage_dict, layer_output_dict, _, _, post_ops, hasPaddedInput = get_stages_and_cfgs(s, outs)
-    inputs_cfg = kwargs['inputs_cfg']
-    filters_cfg = kwargs['filters_cfg']
-    outputs_cfg = kwargs['outputs_cfg']
+    inputs_cfg, filters_cfg, outputs_cfg = get_layer_cfg()
 
     # Searchable parameters
     # --------------------
@@ -91,7 +90,7 @@ def schedule_depth_conv_fused_nchwc(outs, *args, **kwargs):
 
     ######## PaddedInput 0
     if hasPaddedInput[0]:
-        s[stage_dict['PaddedInput_0']].compute_inline()
+        s[stage_dict['FusedConv2D_PaddedInput_0']].compute_inline()
 
     s = s.normalize()
 
