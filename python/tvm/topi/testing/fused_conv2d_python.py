@@ -22,6 +22,23 @@ from .depthwise_conv2d_python import depthwise_conv2d_python_nhwc
 from scipy.special import expit
 import os
 
+def tensor_transformation(data, tensor_cfg, tensor_type, pack=False):
+    if pack:
+        if tensor_type == 'data': # NHWC -> NCHWc
+            n, c_chunk, h, w, vlen = tensor_cfg.get_shape()
+            nchwc = data.reshape(n, h, w, c_chunk, vlen)
+            return np.array(nchwc.transpose(0, 3, 1, 2, 4), order='C')
+        else: # kernel: HWIO -> OIHWio
+            o_chunk, i_chunk, h, w, vlen_i, vlen_o = tensor_cfg.get_shape()
+            if tensor_cfg.depthwise:
+                oihwio = data.reshape(h, w, o_chunk, vlen_o, i_chunk, vlen_i)
+                np_array = np.array(oihwio.transpose(2, 4, 0, 1, 5, 3), order='C')
+            else:
+                oihwio = data.reshape(h, w, i_chunk, vlen_i, o_chunk, vlen_o)
+                np_array = np.array(oihwio.transpose(4, 2, 0, 1, 3, 5), order='C')
+            return np_array
+    return data
+
 def get_fused_conv2d_ref_data(fc,
                                 workload_name,
                                 best_config=None,
@@ -36,7 +53,7 @@ def get_fused_conv2d_ref_data(fc,
         input_cfg = fc.get_input_cfg(0)
         output_data = np.random.uniform(0.0, 0.1, size=(input_cfg.N, input_cfg.H, input_cfg.W, input_cfg.C)).astype(fc.output_dtype)
         ref_data_no_transform.append(output_data)
-        ref_data.append(fc.tensor_transformation(output_data, input_cfg, 'data'))
+        ref_data.append(tensor_transformation(output_data, input_cfg, 'data', fc.pack))
         # params names for saving data
         params_name = ['input']
 
@@ -45,7 +62,7 @@ def get_fused_conv2d_ref_data(fc,
             f_size = (f.H, f.W, f.O, f.I) if f.depthwise else (f.H, f.W, f.I, f.O)
             filter_data = np.random.uniform(0.0, 0.1, size=f_size).astype(fc.output_dtype)
             ref_data_no_transform.append(filter_data)
-            ref_data.append(fc.tensor_transformation(filter_data, f, 'kernel'))
+            ref_data.append(tensor_transformation(filter_data, f, 'kernel', fc.pack))
             input_data = np.copy(output_data)
 
             if f.depthwise:
@@ -82,7 +99,7 @@ def get_fused_conv2d_ref_data(fc,
             if idx == fc.layer_num - 1: # At the last stage, append output_data as the final output for reference
                 output_cfg = fc.get_output_cfg(idx)
                 ref_data_no_transform.append(output_data)
-                ref_data.append(fc.tensor_transformation(output_data, output_cfg, 'data'))
+                ref_data.append(tensor_transformation(output_data, output_cfg, 'data', fc.pack))
         params_name.append('output')
 
         if save_data:
