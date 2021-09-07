@@ -1,4 +1,4 @@
-def gpu_schedules(name, is_autotvm=True, tuning=None):
+def gpu_schedules(name, is_autotvm=True):
     # TODO: Don't use workload name to select the schedule
     if is_autotvm:
         if name == 'depth_conv':

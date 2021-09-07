@@ -482,6 +482,18 @@ def deformable_conv2d_strategy_cuda(attrs, inputs, out_type, target):
     return strategy
 
 
+@fused_conv2d_strategy.register(["cuda", "gpu"])
+def fused_conv2d_strategy_cpu(attrs, inputs, out_type, target):
+    """fused_conv2d cuda strategy"""
+    strategy = _op.OpStrategy()
+    strategy.add_implementation(
+        wrap_compute_fused_conv2d(topi.cuda.fused_conv2d),
+        wrap_schedule_fused_conv2d(topi.cuda.schedule_fused_conv2d),
+        name="fused_conv2d.cuda",
+    )
+    return strategy
+
+
 @conv2d_transpose_strategy.register(["cuda", "gpu"])
 def conv2d_transpose_strategy_cuda(attrs, inputs, out_type, target):
     """conv2d_transpose cuda strategy"""

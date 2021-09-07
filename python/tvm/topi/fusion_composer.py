@@ -17,30 +17,34 @@
 # pylint: disable=invalid-name, too-many-arguments, too-many-nested-blocks
 """Fused Conv2D Composer"""
 import tvm
-from tvm import te, autotvm
-from tvm.autotvm.task import TaskExtractEnv
-from .nn.pad import pad
+from tvm import te
 from .utils import get_vlen, get_4D_shapes_from_params, get_CPU_vlen_from_config
-import numpy as np
 
 class FusionComposer:
     def get_input_cfg(self, idx):
         assert(idx >= 0 and idx < self.layer_num)
         return self.layers[idx][0]
 
+
     def get_filter_cfg(self, idx):
         assert(idx >= 0 and idx < self.layer_num)
         return self.layers[idx][1]
+
 
     def get_output_cfg(self, idx):
         assert(idx >= 0 and idx < self.layer_num)
         return self.layers[idx+1][0]
 
+
     def get_post_op(self, idx):
         assert(idx >= 0 and idx < self.layer_num)
         return self.layers[idx][1].post_op
 
+
     def define_search_space(self, cfg):
+        # Add flop
+        cfg.add_flop(self.get_FLOP())
+
         conv_count = 0
         for idx in range(self.layer_num):
             is_first_stage = (idx == 0)
@@ -80,8 +84,7 @@ class FusionComposer:
                         else:
                             cfg.define_knob('bind_axis', [0, 1, 2, 3, 4]) # 'oc', 'ic', 'h', 'w', 'root'
 
-                # if self.target.kind.name == 'cuda' or self.target.device_name == 'tracing':
-                if not self.pack:
+                if not self.pack: # CUDA or tracing
                     OH, OW, OC = OUTPUT.H, OUTPUT.W, OUTPUT.C
                     c_filter = lambda x: x.size[-1] in get_vlen(OC, self.target.kind.name)
 
@@ -134,9 +137,6 @@ class FusionComposer:
                                             num_outputs=2,
                                             policy='factors')
 
-        # Add flop
-        if cfg:
-            cfg.add_flop(self.get_FLOP())
 
     def update_all_shapes_from_best_cfg(self, best_config):
         if self.pack:
@@ -158,6 +158,7 @@ class FusionComposer:
                 OUTPUT.update_shape(vlen_o) # Actually overlapped with the input of next layer
         self.tuned = True
 
+
     def update_all_shapes_from_tensors(self, input_shape, filter_shapes):
         if self.pack:
             feature_shape = None
@@ -177,6 +178,7 @@ class FusionComposer:
                 OUTPUT.update_shape(vlen_o) # Actually overlapped with the input of next layer
         self.tuned = True
 
+
     def get_FLOP(self):
         flop = 0
         for l in range(0, self.layer_num):
@@ -191,6 +193,7 @@ class FusionComposer:
                 flop += 2 * (ocfg.N * ocfg.H * ocfg.W * ocfg.C)
         return flop
 
+
     def get_theoretical_mem_bytes(self, dtype="float32"):
         mem = 0
         icfg = self.get_input_cfg(0)
@@ -204,6 +207,7 @@ class FusionComposer:
         ocfg = self.get_output_cfg(self.layer_num - 1)
         mem += 4 * (ocfg.N * ocfg.H * ocfg.W * ocfg.C)
         return mem
+
 
     def get_FLOP_per_layer(self):
         flop_list = []
@@ -221,6 +225,7 @@ class FusionComposer:
             flop_list.append(flop)
         return flop_list
 
+
     def get_theoretical_mem_bytes_per_layer(self, dtype="float32"):
         mem = []
         for l in range(0, self.layer_num):
@@ -230,6 +235,7 @@ class FusionComposer:
 
             mem.append(4 * (icfg.N * icfg.H * icfg.W * icfg.C + fcfg.H * fcfg.W * fcfg.I * fcfg.O + ocfg.N * ocfg.H * ocfg.W * ocfg.C))
         return mem
+
 
     def get_pattern(self):
         assert self.layers is not None
@@ -246,8 +252,8 @@ class FusionComposer:
 
         return 'block'
 
+
     def __init__(self, p, pack=None, use_autotvm=True, use_auto_scheduler=False, target=None, dtype='float32', workload_name=None, workspace='/tmp'):
-        self.cfg = None
         self.parameters = p
         self.use_autotvm = use_autotvm
         self.use_auto_scheduler = use_auto_scheduler
@@ -258,28 +264,19 @@ class FusionComposer:
             self.pack = False
         else:
             self.pack = (self.target.kind.name != 'cuda' and self.target.device_name != 'tracing') if pack is None else pack
-        self.output_dtype=dtype
+        self.out_dtype = dtype
         self.task_name = 'fused_conv2d.{}'.format('cuda' if self.target.kind.name == 'cuda' else 'x86')
         self.is_block = False
-        self.layers = []
-        self.placeholders = []
-
         self.layers = get_4D_shapes_from_params(p)
         self.layer_num = len(self.layers) - 1 # Excluding input
-        self.workload_name = workload_name # mv1_1, res_2x, etc
         self.workspace = workspace
         self.tuned = False
 
-        # Temporary variables for composing compute
-        self.filter_cfg = None
-        self.output_cfg = None
-        self.layer_idx = -1
-
         # Temporary variables for returning the best_config
-        self.cfg = None
         device = 'cpu' if 'llvm' in self.target.kind.name else 'gpu'
         self.dir_name = '{}/logs/{}/layer/{}'.format(workspace, 'auto_scheduler' if use_auto_scheduler else 'autotvm', device)
-        self.log_name = '{}_fused_{}.log'.format(self.get_pattern(), self.workload_name)
+        self.log_name = '{}_fused_{}.log'.format(self.get_pattern(), workload_name) # mv1_1, res_2x, etc
+
 
     def make_params(self, raw=True, layout='NHWC'):
         return {
@@ -293,8 +290,9 @@ class FusionComposer:
             "is_dws": [self.get_filter_cfg(idx).depthwise for idx in range(self.layer_num)], 
             "post_ops": [self.get_filter_cfg(idx).post_op for idx in range(self.layer_num)],
             "layouts": ["NCHW{}c".format(self.get_filter_cfg(idx).get_shape()[-1]) if len(self.get_filter_cfg(idx).get_shape()) != 4 else layout for idx in range(self.layer_num)],
-            "out_dtype": "float32", 
+            "out_dtype": self.out_dtype, 
         }
+
 
     def print_info(self):
         print("{} layers".format(self.layer_num))

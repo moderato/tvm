@@ -42,8 +42,8 @@ def schedule_conv_conv_fused_nhwc(outs):
     if hasPaddedInput[1]:
         if bn_relu[0]:
             s[layer_output_dict['Layer_0']].compute_inline()
-        s[stage_dict['PaddedInput_1']].set_scope('shared')
-        stage_dict['SharedInput_1'] = stage_dict['PaddedInput_1'] # For disambiguity: 'PaddedInput_1' won't be used in scheduling
+        s[stage_dict['FusedConv2D_PaddedInput_1']].set_scope('shared')
+        stage_dict['SharedInput_1'] = stage_dict['FusedConv2D_PaddedInput_1'] # For disambiguity: 'FusedConv2D_PaddedInput_1' won't be used in scheduling
     else:
         if bn_relu[0]:
             s[layer_output_dict['Layer_0']].set_scope('shared') # Results of ReLU go to shared
@@ -54,7 +54,7 @@ def schedule_conv_conv_fused_nhwc(outs):
 
     # Beginning
     if hasPaddedInput[0]:
-        s[stage_dict['PaddedInput_0']].set_scope('shared')
+        s[stage_dict['FusedConv2D_PaddedInput_0']].set_scope('shared')
     FS_1 = s.cache_read(param_dict['Filter_0'], 'shared', [stage_dict['Output_0']])
 
     # from pprint import pprint
@@ -158,15 +158,15 @@ def schedule_conv_conv_fused_nhwc(outs):
     s[FS_1].bind(oi, thread_z)
 
     ####### Shared Input
-    s[stage_dict['PaddedInput_0']].compute_at(s[stage_dict['Output_0']], orc)
-    n, h, w, c = s[stage_dict['PaddedInput_0']].op.axis
-    oc, thx = s[stage_dict['PaddedInput_0']].split(c, factor=num_thread_x)
-    vthz, vthy, thz, thy = s[stage_dict['PaddedInput_0']].tile(h, w, x_factor=num_thread_z, y_factor=num_thread_y)
-    s[stage_dict['PaddedInput_0']].reorder(n, oc, vthz, vthy, thz, thy, thx)
-    s[stage_dict['PaddedInput_0']].bind(vthz, vthread_z_0)
-    s[stage_dict['PaddedInput_0']].bind(vthy, vthread_y_0)
-    s[stage_dict['PaddedInput_0']].bind(thz, thread_z)
-    s[stage_dict['PaddedInput_0']].bind(thy, thread_y)
-    s[stage_dict['PaddedInput_0']].bind(thx, thread_x)
+    s[stage_dict['FusedConv2D_PaddedInput_0']].compute_at(s[stage_dict['Output_0']], orc)
+    n, h, w, c = s[stage_dict['FusedConv2D_PaddedInput_0']].op.axis
+    oc, thx = s[stage_dict['FusedConv2D_PaddedInput_0']].split(c, factor=num_thread_x)
+    vthz, vthy, thz, thy = s[stage_dict['FusedConv2D_PaddedInput_0']].tile(h, w, x_factor=num_thread_z, y_factor=num_thread_y)
+    s[stage_dict['FusedConv2D_PaddedInput_0']].reorder(n, oc, vthz, vthy, thz, thy, thx)
+    s[stage_dict['FusedConv2D_PaddedInput_0']].bind(vthz, vthread_z_0)
+    s[stage_dict['FusedConv2D_PaddedInput_0']].bind(vthy, vthread_y_0)
+    s[stage_dict['FusedConv2D_PaddedInput_0']].bind(thz, thread_z)
+    s[stage_dict['FusedConv2D_PaddedInput_0']].bind(thy, thread_y)
+    s[stage_dict['FusedConv2D_PaddedInput_0']].bind(thx, thread_x)
 
     return s

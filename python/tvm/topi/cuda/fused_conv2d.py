@@ -16,24 +16,34 @@
 # under the License.
 # pylint: disable=invalid-name, unused-argument
 """Compute definition for fused_conv2d with cuda backend"""
+
+import logging
+
 import tvm
 from tvm import autotvm
-
+from .. import nn
 from ..fusion_composer import FusionComposer
+from ..utils import tensors_to_fusion_param
 
-@autotvm.template('fused_conv2d.cuda')
-def get_schedule_tuning_cuda(parameters):
-    target = tvm.target.Target('cuda')
-    fc = FusionComposer(parameters, target=target)
+logger = logging.getLogger("topi")
 
-    # Get schedule
-    schedule = fc.get_schedule(tuning=True)
 
-    # Get compute
-    compute = fc.get_compute()
-    input_tensors = fc.make_placeholders()
-    output_tensor = compute(input_tensors)
-    all_tensors = input_tensors + [output_tensor]
+@autotvm.register_topi_compute("fused_conv2d.cuda")
+def fused_conv2d(cfg, Input, Filters, Biases, num_layers, strides, paddings, dilations, is_dws, post_ops, layouts, out_dtype="float32"):
+    target = tvm.target.Target.current()
 
-    s = schedule(output_tensor)
-    return s, all_tensors
+    p = tensors_to_fusion_param(num_layers, Input, Filters, strides, is_dws, post_ops, layouts)
+    if tvm.topi.FUSION_COMPOSER is None or p != tvm.topi.FUSION_COMPOSER.parameters:
+        tvm.topi.FUSION_COMPOSER = FusionComposer(p, pack=False, use_autotvm=True, target=target)
+    tvm.topi.FUSION_COMPOSER.define_search_space(cfg)
+
+    return nn.fused_conv2d(Input, Filters, Biases, num_layers, strides, paddings, dilations, is_dws, post_ops, out_dtype=out_dtype, skip_post_op=False)
+
+
+@autotvm.register_topi_schedule("fused_conv2d.cuda")
+def schedule_fused_conv2d(cfg, outs):
+    assert tvm.topi.FUSION_COMPOSER is not None
+    from .fused_conv2d_schedules.schedule_utils import gpu_schedules as sch
+    f = sch(tvm.topi.FUSION_COMPOSER.get_pattern(), (cfg is not None))
+    s = f(cfg, outs)
+    return s

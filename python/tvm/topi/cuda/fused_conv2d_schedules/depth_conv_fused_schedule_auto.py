@@ -7,8 +7,8 @@ def schedule_depth_conv_fused_nhwc_auto(cfg, outs):
     stage_dict, layer_output_dict, param_dict, _, bn_relu, _ = get_stages_and_cfgs(s, outs)
 
     # ######## Input data, weights, BN, etc
-    s[stage_dict['PaddedInput_0']].compute_inline()
-    PaddedSharedInput = s.cache_read(stage_dict['PaddedInput_0'], 'shared', [stage_dict['Output_0']])
+    s[stage_dict['FusedConv2D_PaddedInput_0']].compute_inline()
+    PaddedSharedInput = s.cache_read(stage_dict['FusedConv2D_PaddedInput_0'], 'shared', [stage_dict['Output_0']])
     FL_1 = s.cache_read(param_dict['Filter_0'], 'local', [stage_dict['Output_0']])
     FS_2 = s.cache_read(param_dict['Filter_1'], 'shared', [stage_dict['Output_1']])
     s[layer_output_dict['Layer_0']].set_scope('shared')

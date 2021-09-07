@@ -90,7 +90,6 @@ def _pack_data(Input, Filters):
     return Input, New_Filters
 
 
-# Default 5D conv 6D = 5D
 @autotvm.register_topi_compute("fused_conv2d.x86")
 def fused_conv2d(cfg, Input, Filters, Biases, num_layers, strides, paddings, dilations, is_dws, post_ops, layouts, out_dtype="float32"):
     target = tvm.target.Target.current()
