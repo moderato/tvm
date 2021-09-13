@@ -109,7 +109,7 @@ def separable_conv_block(
 
 
 def bottleneck_block(data, name, input_channels, output_channels, t, s,
-                        epsilon=1e-5, layout='NCHW', dtype="float32"):
+                        epsilon=1e-5, use_relu6=False, layout='NCHW', dtype="float32"):
     bn_axis = layout.index('C')
     residual = (input_channels == output_channels) and (s == 1)
 
@@ -123,7 +123,7 @@ def bottleneck_block(data, name, input_channels, output_channels, t, s,
         kernel_layout=layers.conv_kernel_layout(layout),
         name=name+'_conv1')
     bn1 = layers.batch_norm_infer(data=conv1, epsilon=epsilon, axis=bn_axis, name=name+'_bn1')
-    act1 = relay.nn.relu(data=bn1)
+    act1 = relay.nn.relu6(data=bn1) if use_relu6 else relay.nn.relu(data=bn1)
 
     if layout == "NCHW":
         wshape = (t*input_channels, 1) + (3, 3)
@@ -144,7 +144,7 @@ def bottleneck_block(data, name, input_channels, output_channels, t, s,
         kernel_layout=layers.conv_kernel_layout(layout, is_depthwise=True),
         name=name + '_depthwise_conv')
     bn2 = layers.batch_norm_infer(data=conv2, epsilon=epsilon, axis=bn_axis, name=name+'_bn2')
-    act2 = relay.nn.relu(data=bn2)
+    act2 = relay.nn.relu6(data=bn2) if use_relu6 else relay.nn.relu(data=bn2)
 
     conv3 = layers.conv2d(
         data=act2,
@@ -295,7 +295,7 @@ def mobile_net_v2(num_classes=1000, data_shape=(1, 3, 224, 224),
     for idx, (t, oc, n, s) in enumerate(cfgs):
         for i in range(n):
             body = bottleneck_block(body, 'bottleneck_block_{}_{}'.format(idx+1, i+1),
-                                    ic, oc, t, s if i == 0 else 1,
+                                    ic, oc, t, s if i == 0 else 1, use_relu6=True,
                                     layout=layout, dtype=dtype)
             ic = oc
 

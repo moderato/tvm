@@ -63,6 +63,31 @@ inline tvm::te::Tensor relu(const tvm::te::Tensor& t, T threshold = static_cast<
 }
 
 /*!
+ * \brief Creates an operation that performs a rectified linear unit clamped at 6
+ *
+ * \param t The input tensor
+ * \param threshold_l The relu threshold (default 0)
+ * \param threshold_h The clamp threshold (default 6)
+ * \param name The name of the operation
+ * \param tag The tag to mark the operation
+ *
+ * \return A Tensor whose op member is the relu operation
+ */
+template <typename T>
+inline tvm::te::Tensor relu6(const tvm::te::Tensor& t,
+                            T threshold_l = static_cast<T>(0), T threshold_h = static_cast<T>(6),
+                            std::string name = "T_relu6", std::string tag = kElementWise) {
+  return tvm::te::compute(
+      t->shape,
+      [&](const tvm::Array<tvm::tir::Var>& i) {
+        auto threshold_l_const = tvm::tir::make_const(t->dtype, threshold_l);
+        auto threshold_h_const = tvm::tir::make_const(t->dtype, threshold_h);
+        return tvm::min(tvm::max(t(i), threshold_l_const), threshold_h_const);
+      },
+      name, tag);
+}
+
+/*!
  * \brief Creates an operation that performs a leaky rectified linear unit
  *
  * \param t The input tensor

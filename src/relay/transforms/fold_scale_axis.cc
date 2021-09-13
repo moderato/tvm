@@ -381,6 +381,11 @@ RELAY_REGISTER_OP("nn.relu").set_attr<FForwardPrep>("FScaleAxisForwardPrep", Rel
 RELAY_REGISTER_OP("nn.relu").set_attr<FForwardRewrite>("FScaleAxisForwardRewrite",
                                                        ReluForwardRewrite);
 
+RELAY_REGISTER_OP("nn.relu6").set_attr<FForwardPrep>("FScaleAxisForwardPrep", ReluForwardPrep);
+
+RELAY_REGISTER_OP("nn.relu6").set_attr<FForwardRewrite>("FScaleAxisForwardRewrite",
+                                                       ReluForwardRewrite);
+
 RELAY_REGISTER_OP("nn.leaky_relu").set_attr<FForwardPrep>("FScaleAxisForwardPrep", ReluForwardPrep);
 
 RELAY_REGISTER_OP("nn.leaky_relu")

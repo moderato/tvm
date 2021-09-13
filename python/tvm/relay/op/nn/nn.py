@@ -1471,6 +1471,25 @@ def relu(data):
     return _make.relu(data)
 
 
+def relu6(data):
+    """Rectified linear unit clamped at 6.
+
+    .. math::
+       out = min(max(x, 0), 6)
+
+    Parameters
+    ----------
+    data : tvm.relay.Expr
+        The input data
+
+    Returns
+    -------
+    result : tvm.relay.Expr
+        The computed result.
+    """
+    return _make.relu6(data)
+
+
 def leaky_relu(data, alpha):
     """This operator takes data as input and does Leaky version
     of a Rectified Linear Unit.

@@ -37,6 +37,11 @@ reg.register_broadcast_schedule("nn.relu")
 reg.register_pattern("nn.relu", OpPattern.ELEMWISE)
 
 
+# relu6
+reg.register_broadcast_schedule("nn.relu6")
+reg.register_pattern("nn.relu6", OpPattern.ELEMWISE)
+
+
 # softmax
 reg.register_strategy("nn.softmax", strategy.softmax_strategy)
 reg.register_pattern("nn.softmax", OpPattern.OPAQUE)
@@ -1215,3 +1220,4 @@ def dilate_shape_func(attrs, inputs, _):
 reg.register_shape_func("nn.bias_add", False, elemwise_shape_func)
 reg.register_shape_func("nn.softmax", False, elemwise_shape_func)
 reg.register_shape_func("nn.relu", False, elemwise_shape_func)
+reg.register_shape_func("nn.relu6", False, elemwise_shape_func)

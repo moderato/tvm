@@ -428,6 +428,29 @@ RELAY_REGISTER_OP("nn.relu")
       return Array<te::Tensor>{topi::relu(inputs[0], 0.0f)};
     });
 
+// relu6
+TVM_REGISTER_GLOBAL("relay.op.nn._make.relu6").set_body_typed([](Expr data) {
+  static const Op& op = Op::Get("nn.relu6");
+  return Call(op, {data}, Attrs(), {});
+});
+
+RELAY_REGISTER_OP("nn.relu6")
+    .describe(R"code(Returns the relu6 input array, computed element-wise.
+
+.. math::
+   min(max(x, 0), 6)
+
+)code" TVM_ADD_FILELINE)
+    .set_num_inputs(1)
+    .add_argument("data", "Tensor", "The input tensor.")
+    .set_support_level(1)
+    .add_type_rel("Identity", IdentityRel)
+    .set_attr<FInferCorrectLayout>("FInferCorrectLayout", ElemwiseArbitraryLayout)
+    .set_attr<FTVMCompute>("FTVMCompute", [](const Attrs& attrs, const Array<te::Tensor>& inputs,
+                                             const Type& out_type) {
+      return Array<te::Tensor>{topi::relu6(inputs[0], 0.0f, 6.0f)};
+    });
+
 // Positional relay function to create LRN operator used by frontend FFI.
 TVM_REGISTER_NODE_TYPE(LRNAttrs);
 
