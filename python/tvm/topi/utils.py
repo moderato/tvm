@@ -719,6 +719,16 @@ def attrs_to_fusion_param(attrs, inputs):
     return param
 
 
+def fused_conv2d_workload_to_fusion_param(workload):
+    return tensors_to_fusion_param(num_layers=workload[4], 
+                                    Input=workload[1][1], 
+                                    Filters=[w[1] for w in workload[2]], 
+                                    strides=workload[5], 
+                                    is_dws=workload[8], 
+                                    post_ops=workload[9], 
+                                    layouts=workload[10])
+
+
 def tensors_to_fusion_param(num_layers, Input, Filters, strides, is_dws, post_ops, layouts):
     """
         Accept Input and Filters as either te.Tensor or tuple

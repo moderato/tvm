@@ -25,7 +25,7 @@ from tvm import autotvm
 from .. import nn
 from ..fusion_composer import FusionComposer
 from ..nn.fused_conv2d import fused_conv2d_infer_layout
-from ..utils import tensors_to_fusion_param
+from ..utils import tensors_to_fusion_param, fused_conv2d_workload_to_fusion_param
 
 logger = logging.getLogger("topi")
 
@@ -34,18 +34,11 @@ logger = logging.getLogger("topi")
 def _fused_conv2d_infer_layout(workload, cfg):
     if cfg.is_fallback:
         raise Exception("Don't accept FallBack config")
-    num_layers = workload[4]
-    p = tensors_to_fusion_param(num_layers=num_layers, 
-                                Input=workload[1][1], 
-                                Filters=[w[1] for w in workload[2]], 
-                                strides=workload[5], 
-                                is_dws=workload[8], 
-                                post_ops=workload[9], 
-                                layouts=workload[10])
-
+    p = fused_conv2d_workload_to_fusion_param(workload)
     fc = FusionComposer(p, pack=True, use_autotvm=True, target=tvm.target.Target("llvm -mcpu=tracing"))
     fc.update_all_shapes_from_best_cfg(cfg)
     layers = fc.layers
+    num_layers = fc.num_layer_num
 
     in_shape = layers[0][0].get_shape()
     vlen_i = cfg['vlen_input'].val

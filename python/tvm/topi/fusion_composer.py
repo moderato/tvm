@@ -281,15 +281,15 @@ class FusionComposer:
     def make_params(self, raw=True, layout='NHWC'):
         return {
             "Input": te.placeholder(self.get_input_cfg(0).get_shape(raw, layout), name='Input'),
-            "Filters": [te.placeholder(self.get_filter_cfg(idx).get_shape(raw, layout), name='Filter_{}'.format(idx)) for idx in range(self.layer_num)],
-            "Biases": [te.placeholder((self.get_output_cfg(idx).C,), name='Bias_{}'.format(idx)) for idx in range(self.layer_num)],
+            "Filters": tuple([te.placeholder(self.get_filter_cfg(idx).get_shape(raw, layout), name='Filter_{}'.format(idx)) for idx in range(self.layer_num)]),
+            "Biases": tuple([te.placeholder((self.get_output_cfg(idx).C,), name='Bias_{}'.format(idx)) for idx in range(self.layer_num)]),
             "num_layers": self.layer_num,
-            "strides": [[self.get_filter_cfg(idx).stride_h, self.get_filter_cfg(idx).stride_w] for idx in range(self.layer_num)],
-            "paddings": [self.get_filter_cfg(idx).get_padding_shape() for idx in range(self.layer_num)], 
-            "dilations": [[self.get_filter_cfg(idx).dilation_h, self.get_filter_cfg(idx).dilation_w] for idx in range(self.layer_num)], 
-            "is_dws": [self.get_filter_cfg(idx).depthwise for idx in range(self.layer_num)], 
-            "post_ops": [self.get_filter_cfg(idx).post_op for idx in range(self.layer_num)],
-            "layouts": ["NCHW{}c".format(self.get_filter_cfg(idx).get_shape()[-1]) if len(self.get_filter_cfg(idx).get_shape()) != 4 else layout for idx in range(self.layer_num)],
+            "strides": tuple([tuple([self.get_filter_cfg(idx).stride_h, self.get_filter_cfg(idx).stride_w]) for idx in range(self.layer_num)]),
+            "paddings": tuple([self.get_filter_cfg(idx).get_padding_shape() for idx in range(self.layer_num)]), 
+            "dilations": tuple([tuple([self.get_filter_cfg(idx).dilation_h, self.get_filter_cfg(idx).dilation_w]) for idx in range(self.layer_num)]), 
+            "is_dws": tuple([self.get_filter_cfg(idx).depthwise for idx in range(self.layer_num)]), 
+            "post_ops": tuple([self.get_filter_cfg(idx).post_op for idx in range(self.layer_num)]),
+            "layouts": tuple(["NCHW{}c".format(self.get_filter_cfg(idx).get_shape()[-1]) if len(self.get_filter_cfg(idx).get_shape()) != 4 else layout for idx in range(self.layer_num)]),
             "out_dtype": self.out_dtype, 
         }
 

@@ -51,7 +51,7 @@ def get_fused_conv2d_ref_data(fc,
 
         # Pretending the input_data is some output_data from stage -1
         input_cfg = fc.get_input_cfg(0)
-        output_data = np.random.uniform(0.0, 0.1, size=(input_cfg.N, input_cfg.H, input_cfg.W, input_cfg.C)).astype(fc.output_dtype)
+        output_data = np.random.uniform(0.0, 0.1, size=(input_cfg.N, input_cfg.H, input_cfg.W, input_cfg.C)).astype(fc.out_dtype)
         ref_data_no_transform.append(output_data)
         ref_data.append(tensor_transformation(output_data, input_cfg, 'data', fc.pack))
         # params names for saving data
@@ -60,21 +60,21 @@ def get_fused_conv2d_ref_data(fc,
         for idx in range(fc.layer_num):
             f = fc.get_filter_cfg(idx)
             f_size = (f.H, f.W, f.O, f.I) if f.depthwise else (f.H, f.W, f.I, f.O)
-            filter_data = np.random.uniform(0.0, 0.1, size=f_size).astype(fc.output_dtype)
+            filter_data = np.random.uniform(0.0, 0.1, size=f_size).astype(fc.out_dtype)
             ref_data_no_transform.append(filter_data)
             ref_data.append(tensor_transformation(filter_data, f, 'kernel', fc.pack))
             input_data = np.copy(output_data)
 
             if f.depthwise:
-                output_data = depthwise_conv2d_python_nhwc(input_data, filter_data, stride=[f.stride_h, f.stride_w], padding='SAME').astype(fc.output_dtype)
+                output_data = depthwise_conv2d_python_nhwc(input_data, filter_data, stride=[f.stride_h, f.stride_w], padding='SAME').astype(fc.out_dtype)
                 params_name.append('filter_{}_d'.format(idx+1)) # Mark depthwise filter
             else: # Normal convolution
-                output_data = conv2d_nhwc_python(input_data, filter_data, f.stride_h, padding=f.padding).astype(fc.output_dtype)
+                output_data = conv2d_nhwc_python(input_data, filter_data, f.stride_h, padding=f.padding).astype(fc.out_dtype)
                 params_name.append('filter_{}'.format(idx+1))
 
             if f.post_op is not None:
                 n, h, w, oc = output_data.shape
-                bias_np = np.random.uniform(0.0, 0.1, size=(oc,)).astype(fc.output_dtype)
+                bias_np = np.random.uniform(0.0, 0.1, size=(oc,)).astype(fc.out_dtype)
                 ref_data_no_transform.append(bias_np)
                 ref_data.append(bias_np)
 
@@ -93,7 +93,7 @@ def get_fused_conv2d_ref_data(fc,
                         post_op_scipy[:,:,:,c] = np.minimum(post_op_scipy[:,:,:,c], 6)
                     elif f.post_op == 'sigmoid':
                         post_op_scipy[:,:,:,c] = expit(post_op_scipy[:,:,:,c])
-                output_data = post_op_scipy.astype(fc.output_dtype)
+                output_data = post_op_scipy.astype(fc.out_dtype)
                 params_name.append('bias_{}'.format(idx+1))
 
             if idx == fc.layer_num - 1: # At the last stage, append output_data as the final output for reference

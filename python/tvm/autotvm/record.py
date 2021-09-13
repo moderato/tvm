@@ -303,7 +303,7 @@ def pick_best(in_file, out_file):
             best_set.remove(measure_str_key(inp))
 
 
-def pick_best_batch(in_file, batch=100):
+def pick_best_batch(in_file, batch=200):
     if os.path.isfile(in_file):
         in_file = [in_file]
     elif os.path.isdir(in_file):
@@ -330,7 +330,7 @@ def pick_best_batch(in_file, batch=100):
     return picked
 
 
-def pick_best_batch_and_write(in_file, out_file, batch=100, append=False):
+def pick_best_batch_and_write(in_file, out_file, batch=200, append=False):
     """
     Pick the best entries from a file and store them to another file.
 
@@ -343,7 +343,6 @@ def pick_best_batch_and_write(in_file, out_file, batch=100, append=False):
     batch: int
         The number of entries to be extracted
     """
-    from tvm.topi.fusion_composer import FusionComposer # Needed as tasks should be registered. TODO: Integrate fusion_composer into TOPI and remove this line.
     picked = pick_best_batch(in_file, batch)
 
     write_mode = 'a' if append else 'w'
@@ -373,7 +372,7 @@ if __name__ == "__main__":
     parser.add_argument("--mode", choices=["read", "pick", "split", "pick_batch"], default="read")
     parser.add_argument("--i", type=str, help="input file")
     parser.add_argument("--o", type=str, default=None, help="output file")
-    parser.add_argument("--batch_size", type=int, default=100, help="number of best entries to be extracted")
+    parser.add_argument("--batch_size", type=int, default=200, help="number of best entries to be extracted")
     parser.add_argument("--append", action="store_true")
     parser.add_argument("--begin", type=int, default=0)
     parser.add_argument("--end", type=int, default=5)
