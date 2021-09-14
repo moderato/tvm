@@ -28,22 +28,24 @@ from ..utils import tensors_to_fusion_param
 logger = logging.getLogger("topi")
 
 
+def schedule_fused_conv2d_raw(cfg, outs):
+    assert tvm.topi.FUSION_COMPOSER is not None
+    from .fused_conv2d_schedules.schedule_utils import gpu_schedules as sch
+    f = sch(tvm.topi.FUSION_COMPOSER.get_pattern(), (cfg is not None))
+    s = f(cfg, outs)
+    return s
+
+
 @autotvm.register_topi_compute("fused_conv2d.cuda")
 def fused_conv2d(cfg, Input, Filters, Biases, num_layers, strides, paddings, dilations, is_dws, post_ops, layouts, out_dtype="float32"):
-    target = tvm.target.Target.current()
-
     p = tensors_to_fusion_param(num_layers, Input, Filters, strides, is_dws, post_ops, layouts)
     if tvm.topi.FUSION_COMPOSER is None or p != tvm.topi.FUSION_COMPOSER.parameters:
-        tvm.topi.FUSION_COMPOSER = FusionComposer(p, pack=False, use_autotvm=True, target=target)
-    tvm.topi.FUSION_COMPOSER.define_search_space(cfg)
+        tvm.topi.FUSION_COMPOSER = FusionComposer(p, pack=False)
+    tvm.topi.FUSION_COMPOSER.define_search_space(cfg, 'cuda')
 
     return nn.fused_conv2d(Input, Filters, Biases, num_layers, strides, paddings, dilations, is_dws, post_ops, out_dtype=out_dtype, skip_post_op=False)
 
 
 @autotvm.register_topi_schedule("fused_conv2d.cuda")
 def schedule_fused_conv2d(cfg, outs):
-    assert tvm.topi.FUSION_COMPOSER is not None
-    from .fused_conv2d_schedules.schedule_utils import gpu_schedules as sch
-    f = sch(tvm.topi.FUSION_COMPOSER.get_pattern(), (cfg is not None))
-    s = f(cfg, outs)
-    return s
+    return schedule_fused_conv2d_raw(cfg, outs)

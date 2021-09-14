@@ -39,15 +39,16 @@ def tensor_transformation(data, tensor_cfg, tensor_type, pack=False):
             return np_array
     return data
 
+
 def get_fused_conv2d_ref_data(fc,
                                 workload_name,
+                                workspace,
                                 best_config=None,
                                 save_data=False):
         if best_config:
             fc.update_all_shapes_from_best_cfg(best_config)
         ref_data = []
         ref_data_no_transform = []
-        workspace = fc.workspace
 
         # Pretending the input_data is some output_data from stage -1
         input_cfg = fc.get_input_cfg(0)

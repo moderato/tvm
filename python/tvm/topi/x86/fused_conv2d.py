@@ -83,15 +83,23 @@ def _pack_data(Input, Filters):
     return Input, New_Filters
 
 
+def schedule_fused_conv2d_raw(cfg, outs):
+    assert tvm.topi.FUSION_COMPOSER is not None
+    from .fused_conv2d_schedules.schedule_utils import cpu_schedules as sch
+    f = sch(tvm.topi.FUSION_COMPOSER.get_pattern(), (cfg is not None), \
+            tuning=(not tvm.topi.FUSION_COMPOSER.tuned or autotvm.GLOBAL_SCOPE.in_tuning)) # Either it has never been tuned (task creation) or it's tuning.
+    s = f(cfg, outs)
+    return s
+
+
 @autotvm.register_topi_compute("fused_conv2d.x86")
 def fused_conv2d(cfg, Input, Filters, Biases, num_layers, strides, paddings, dilations, is_dws, post_ops, layouts, out_dtype="float32"):
-    target = tvm.target.Target.current()
     _4D = len(Input.shape) == 4
 
     p = tensors_to_fusion_param(num_layers, Input, Filters, strides, is_dws, post_ops, layouts)
     if tvm.topi.FUSION_COMPOSER is None or p != tvm.topi.FUSION_COMPOSER.parameters:
-        tvm.topi.FUSION_COMPOSER = FusionComposer(p, pack=True, use_autotvm=True, target=target)
-    tvm.topi.FUSION_COMPOSER.define_search_space(cfg)
+        tvm.topi.FUSION_COMPOSER = FusionComposer(p, pack=True)
+    tvm.topi.FUSION_COMPOSER.define_search_space(cfg, 'llvm')
 
     if _4D:
         # Same treatment as topi.x86.conv2d_nchwc
@@ -114,9 +122,4 @@ def fused_conv2d(cfg, Input, Filters, Biases, num_layers, strides, paddings, dil
 
 @autotvm.register_topi_schedule("fused_conv2d.x86")
 def schedule_fused_conv2d(cfg, outs):
-    assert tvm.topi.FUSION_COMPOSER is not None
-    from .fused_conv2d_schedules.schedule_utils import cpu_schedules as sch
-    f = sch(tvm.topi.FUSION_COMPOSER.get_pattern(), (cfg is not None), \
-            tuning=(not tvm.topi.FUSION_COMPOSER.tuned or autotvm.GLOBAL_SCOPE.in_tuning)) # Either it has never been tuned (task creation) or it's tuning.
-    s = f(cfg, outs)
-    return s
+    return schedule_fused_conv2d_raw(cfg, outs)

@@ -41,7 +41,10 @@ class FusionComposer:
         return self.layers[idx][1].post_op
 
 
-    def define_search_space(self, cfg):
+    def define_search_space(self, cfg, target_str=None):
+        if cfg is None:
+            return
+
         # Add flop
         cfg.add_flop(self.get_FLOP())
 
@@ -59,9 +62,9 @@ class FusionComposer:
                 # Vector length
                 if self.pack:
                     if idx == 0: # Define input vlen for the first layer, no matter what it is
-                        cfg.define_knob('vlen_input', get_vlen(DATA.C, self.target.kind.name))
+                        cfg.define_knob('vlen_input', get_vlen(DATA.C, target_str))
                     if not FILTER.depthwise: # ONLY DEFINE vlen FOR CONV, because dw-conv uses the vlen of the previous layer
-                        cfg.define_knob('vlen_conv_{}'.format(conv_count), get_vlen(OUTPUT.C, self.target.kind.name))
+                        cfg.define_knob('vlen_conv_{}'.format(conv_count), get_vlen(OUTPUT.C, target_str))
                         conv_count += 1
 
                     # Assuming no two dw-convs come together
@@ -86,7 +89,7 @@ class FusionComposer:
 
                 if not self.pack: # CUDA or tracing
                     OH, OW, OC = OUTPUT.H, OUTPUT.W, OUTPUT.C
-                    c_filter = lambda x: x.size[-1] in get_vlen(OC, self.target.kind.name)
+                    c_filter = lambda x: x.size[-1] in get_vlen(OC, target_str)
 
                     if FILTER.depthwise:
                         cfg.define_split('split_{}_c'.format(idx), cfg.axis(int(OC)), num_outputs=3, policy='factors', filter=c_filter)
@@ -253,36 +256,21 @@ class FusionComposer:
         return 'block'
 
 
-    def __init__(self, p, pack=None, use_autotvm=True, use_auto_scheduler=False, target=None, dtype='float32', workload_name=None, workspace='/tmp'):
+    def __init__(self, p, pack, dtype='float32'):
         self.parameters = p
-        self.use_autotvm = use_autotvm
-        self.use_auto_scheduler = use_auto_scheduler
-        self.target = target
-        if isinstance(self.target, str):
-            self.target = tvm.target.Target(self.target)
-        if use_auto_scheduler:
-            self.pack = False
-        else:
-            self.pack = (self.target.kind.name != 'cuda' and self.target.device_name != 'tracing') if pack is None else pack
+        self.pack = pack
         self.out_dtype = dtype
-        self.task_name = 'fused_conv2d.{}'.format('cuda' if self.target.kind.name == 'cuda' else 'x86')
         self.is_block = False
         self.layers = get_4D_shapes_from_params(p)
         self.layer_num = len(self.layers) - 1 # Excluding input
-        self.workspace = workspace
         self.tuned = False
-
-        # Temporary variables for returning the best_config
-        device = 'cpu' if 'llvm' in self.target.kind.name else 'gpu'
-        self.dir_name = '{}/logs/{}/layer/{}'.format(workspace, 'auto_scheduler' if use_auto_scheduler else 'autotvm', device)
-        self.log_name = '{}_fused_{}.log'.format(self.get_pattern(), workload_name) # mv1_1, res_2x, etc
 
 
     def make_params(self, raw=True, layout='NHWC'):
         return {
             "Input": te.placeholder(self.get_input_cfg(0).get_shape(raw, layout), name='Input'),
             "Filters": tuple([te.placeholder(self.get_filter_cfg(idx).get_shape(raw, layout), name='Filter_{}'.format(idx)) for idx in range(self.layer_num)]),
-            "Biases": tuple([te.placeholder((self.get_output_cfg(idx).C,), name='Bias_{}'.format(idx)) for idx in range(self.layer_num)]),
+            "Biases": tuple([te.placeholder((self.get_output_cfg(idx).C,), name='Bias_{}'.format(idx)) if self.get_post_op(idx) else None for idx in range(self.layer_num)]),
             "num_layers": self.layer_num,
             "strides": tuple([tuple([self.get_filter_cfg(idx).stride_h, self.get_filter_cfg(idx).stride_w]) for idx in range(self.layer_num)]),
             "paddings": tuple([self.get_filter_cfg(idx).get_padding_shape() for idx in range(self.layer_num)]), 

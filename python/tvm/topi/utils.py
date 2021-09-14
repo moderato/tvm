@@ -499,9 +499,9 @@ class FeatureConfig:
         self.vlen = -1
         self.shape = (N, H, W, C)
     def update_shape(self, vlen):
-        self.vlen = vlen
-        C_chunk = tvm.tir.indexdiv(self.C, vlen).value
-        self.shape = (self.N, C_chunk, self.H, self.W, vlen)
+        self.vlen = int(vlen)
+        C_chunk = int(tvm.tir.indexdiv(self.C, vlen).value)
+        self.shape = (self.N, C_chunk, self.H, self.W, self.vlen)
     def get_shape(self, raw=False, layout='NHWC'):
         if raw:
             return (self.N, self.H, self.W, self.C) if layout == 'NHWC' else (self.N, self.C, self.H, self.W) # NCHW
@@ -531,11 +531,11 @@ class FilterConfig:
             self.padding = None
             self.padding_shape = padding
     def update_shape(self, vlen_i, vlen_o):
-        self.vlen_i = vlen_i
-        self.vlen_o = vlen_o
-        IC_chunk = tvm.tir.indexdiv(self.I, vlen_i).value
-        OC_chunk = tvm.tir.indexdiv(self.O, vlen_o).value
-        self.shape = (OC_chunk, IC_chunk, self.H, self.W, vlen_i, vlen_o) if not self.depthwise else (OC_chunk, 1, self.H, self.W, 1, vlen_o)
+        self.vlen_i = int(vlen_i)
+        self.vlen_o = int(vlen_o)
+        IC_chunk = int(tvm.tir.indexdiv(self.I, vlen_i).value)
+        OC_chunk = int(tvm.tir.indexdiv(self.O, vlen_o).value)
+        self.shape = (OC_chunk, IC_chunk, self.H, self.W, self.vlen_i, self.vlen_o) if not self.depthwise else (OC_chunk, 1, self.H, self.W, 1, self.vlen_o)
     def get_shape(self, raw=False, layout='NHWC'):
         if raw:
             if layout == 'NHWC':
@@ -666,7 +666,7 @@ def export_kernel_launch_config(workload_name, output_shape, best_config, target
 def get_CPU_vlen_from_config(best_config=None, cfg_key=''):
     from tvm.autotvm.task.space import FallbackConfigEntity
     if best_config is None or isinstance(best_config, FallbackConfigEntity):
-        return 16
+        return 8
     config_dict = best_config.to_json_dict()
     if cfg_key != 'all':
         for e in config_dict['entity']:

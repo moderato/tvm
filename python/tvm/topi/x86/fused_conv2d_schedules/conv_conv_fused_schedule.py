@@ -3,7 +3,7 @@ from tvm.topi.utils import get_stages_and_cfgs
 from .libxsmm_intrin import intrin_libxsmm_brgemm
 from .schedule_utils import get_layer_cfg
 
-def schedule_conv_conv_fused_nchwc(outs):
+def schedule_conv_conv_fused_nchwc(cfg, outs):
     outs = [outs] if isinstance(outs, te.tensor.Tensor) else outs
     s = te.create_schedule([x.op for x in outs])
     stage_dict, layer_output_dict, _, _, post_ops, hasPaddedInput = get_stages_and_cfgs(s, outs)
