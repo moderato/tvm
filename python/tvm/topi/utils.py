@@ -552,9 +552,12 @@ class FilterConfig:
         return self.dilation_h, self.dilation_w
 
 
-def get_vlen(axis_length, device=None):
+def get_vlen(axis_length, device=None, c_shorter_than_32=False):
     if device == 'cuda':
-        candidates = [16, 24, 32, 64, 128]
+        if c_shorter_than_32:
+            candidates = [8, 16, 24]
+        else:
+            candidates = [32, 64, 128]
     elif 'llvm' in device:
         candidates = [8, 16, 24, 32, 64] # Non-c axes don't matter
     vlens = []
@@ -622,13 +625,13 @@ def export_kernel_launch_config(workload_name, output_shape, best_config, target
 
         # print('n: {}, ho: {}, wo: {}, recompute: {}'.format(n, ho, wo, recompute))
         for e in config_dict['entity']:
-            if e[0] == 'split_1_h': # TODO: Fix it layer with a layer num
-                thz = e[2][1]
-                thy = e[2][2]
+            if e[0] == 'split_h': # TODO: Fix it layer with a layer num
+                thz = e[2][2]
                 for ee in e[2][1:]:
                     ho = (ho + ee - 1) // ee
                     # print('ho: {}', ho)
-            elif e[0] == 'split_1_w':
+            elif e[0] == 'split_w':
+                thy = e[2][2]
                 for ee in e[2][1:]:
                     wo = (wo + ee - 1) // ee
                     # print('wo: {}', wo)

@@ -41,6 +41,7 @@ def tensor_transformation(data, tensor_cfg, tensor_type, pack=False):
 
 
 def get_fused_conv2d_ref_data(fc,
+                                device,
                                 workload_name,
                                 workspace,
                                 best_config=None,
@@ -105,13 +106,13 @@ def get_fused_conv2d_ref_data(fc,
 
         if save_data:
             # Save ref data
-            folder_name = '{}/npy/fused/{}/'.format(workspace, workload_name)
+            folder_name = '{}/npy/{}/fused/{}/'.format(workspace, device, workload_name)
             if not os.path.exists(folder_name):
                 os.mkdir(folder_name)
             for i in range(0, len(ref_data)):
                 filename = folder_name + params_name[i]
                 # Transpose filter for cudnn: should be non-fortran order
-                if fc.target.kind.name == 'cuda':
+                if device == 'gpu':
                     np.save(filename, ref_data[i])
                     if 'filter' in filename:
                         np.save(filename+'_transposed', np.array(ref_data[i].transpose(3, 2, 0, 1), order='C'))
