@@ -87,33 +87,6 @@ class FusionComposer:
                         else:
                             cfg.define_knob('bind_axis', [0, 1, 2, 3, 4]) # 'oc', 'ic', 'h', 'w', 'root'
 
-                if not self.pack: # CUDA or tracing
-                    OH, OW, OC = OUTPUT.H, OUTPUT.W, OUTPUT.C
-                    c_filter = lambda x: x.size[-1] in get_vlen(OC, target_str)
-
-                    if FILTER.depthwise:
-                        cfg.define_split('split_{}_c'.format(idx), cfg.axis(int(OC)), num_outputs=3, policy='factors', filter=c_filter)
-                    else:
-                        if is_final_stage:
-                            H_num_outputs = 4
-                            W_num_outputs = 3 if self.get_pattern() == "depth_conv" else 4
-
-                            cfg.define_split('split_h', cfg.axis(int(OH)),
-                                            num_outputs=H_num_outputs,
-                                            policy='factors')
-                            cfg.define_split('split_w', cfg.axis(int(OW)),
-                                                num_outputs=W_num_outputs,
-                                                policy='factors')
-
-                        cfg.define_split('split_{}_c'.format(idx), cfg.axis(int(OC)),
-                                        num_outputs=3,
-                                        policy='factors', filter=c_filter)
-
-                        if is_first_stage:
-                            cfg.define_split('split_0_rc', cfg.axis(int(OC)),
-                                            num_outputs=3,
-                                            policy='factors')
-                else:
                     _, OC_chunk, OH, OW, _ = OUTPUT.get_shape()
                     c_filter = lambda x: x.size[-1] >= -1 # dummy
 
@@ -121,15 +94,12 @@ class FusionComposer:
                         cfg.define_split('split_{}_c'.format(idx), cfg.axis(int(OC_chunk)), num_outputs=2, policy='factors', filter=c_filter)
                     else:
                         if is_final_stage:
-                            H_num_outputs = 3
-                            W_num_outputs = 3
-
                             cfg.define_split('split_h', cfg.axis(int(OH)),
-                                            num_outputs=H_num_outputs,
+                                            num_outputs=3,
                                             policy='factors')
                             cfg.define_split('split_w', cfg.axis(int(OW)),
-                                                num_outputs=W_num_outputs,
-                                                policy='factors')
+                                            num_outputs=3,
+                                            policy='factors')
 
                         cfg.define_split('split_{}_c'.format(idx), cfg.axis(int(OC_chunk)),
                                         num_outputs=2,
@@ -138,6 +108,35 @@ class FusionComposer:
                         if is_first_stage:
                             cfg.define_split('split_0_rc', cfg.axis(int(OC_chunk)),
                                             num_outputs=2,
+                                            policy='factors')
+                else: # CUDA or tracing
+                    OH, OW, OC = OUTPUT.H, OUTPUT.W, OUTPUT.C
+
+                    if FILTER.depthwise:
+                        c_filter = lambda x: x.size[-1] in get_vlen(OC, target_str, c_shorter_than_32=(int(OC) < 32))
+                        cfg.define_split('split_{}_c'.format(idx), cfg.axis(int(OC)), num_outputs=3, policy='factors', filter=c_filter)
+                    else:
+                        if is_final_stage:
+                            cfg.define_split('split_h', cfg.axis(int(OH)),
+                                            num_outputs=4,
+                                            policy='factors')
+                            cfg.define_split('split_w', cfg.axis(int(OW)),
+                                            num_outputs=4,
+                                            policy='factors')
+                        # c_filter = lambda x: x.size[-1] in get_vlen(OC, target_str, c_shorter_than_32=(int(OC) < 32))
+                        c_filter = lambda x: (
+                            x.size[-2] in get_vlen(OC, target_str, c_shorter_than_32=(int(OC) < 32)) and
+                            x.size[-1] in [1, 2, 4]
+                        ) # x.size[-1] for vectorization
+
+                        # Split C of the last layer or RC of the next layer (i.e. split_0_c -> RC of 2nd layer)
+                        cfg.define_split('split_{}_c'.format(idx), cfg.axis(int(OC)),
+                                        num_outputs=4 if is_final_stage else 3,
+                                        policy='factors', filter=c_filter if is_final_stage else lambda x: x.size[-1] > -1) # dummy
+
+                        if is_first_stage:
+                            cfg.define_split('split_0_rc', cfg.axis(int(OC)),
+                                            num_outputs=3,
                                             policy='factors')
 
 

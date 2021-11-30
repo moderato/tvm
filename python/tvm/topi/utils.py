@@ -611,61 +611,6 @@ def get_4D_shapes_from_params(p):
     return layers
 
 
-def export_kernel_launch_config(workload_name, output_shape, best_config, target, unfused=False):
-    assert best_config is not None
-    config_dict = best_config.to_json_dict()
-
-    if target == 'cuda':
-        if not os.path.exists('generated_kernels/gpu/fused/kernel_launch_config'):
-            os.mkdir('generated_kernels/gpu/fused/kernel_launch_config')
-        n = output_shape[0]
-        ho = output_shape[1]
-        wo = output_shape[2]
-        recompute = output_shape[3]
-
-        # print('n: {}, ho: {}, wo: {}, recompute: {}'.format(n, ho, wo, recompute))
-        for e in config_dict['entity']:
-            if e[0] == 'split_h': # TODO: Fix it layer with a layer num
-                thz = e[2][2]
-                for ee in e[2][1:]:
-                    ho = (ho + ee - 1) // ee
-                    # print('ho: {}', ho)
-            elif e[0] == 'split_w':
-                thy = e[2][2]
-                for ee in e[2][1:]:
-                    wo = (wo + ee - 1) // ee
-                    # print('wo: {}', wo)
-            elif e[0] == 'split_1_c':
-                thx = e[2][2]
-                for ee in e[2][1:]:
-                    recompute = (recompute + ee - 1) // ee
-                    # print('recompute: {}', recompute)
-        blx = n * ho * wo * recompute
-        print('n: {}, ho: {}, wo: {}, recompute: {}'.format(n, ho, wo, recompute))
-        print('thx: {}, thy: {}, thz: {}, blx: {}'.format(thx, thy, thz, blx))
-
-        with open('generated_kernels/gpu/fused/kernel_launch_config/{}_config.csv'.format(workload_name), 'w') as f:
-            f.write('{},{},{},{}'.format(thx, thy, thz, blx))
-    else:
-        if not os.path.exists('generated_kernels/cpu/{}/kernel_launch_config'.format('unfused' if unfused else 'fused')):
-            os.mkdir('generated_kernels/cpu/{}/kernel_launch_config'.format('unfused' if unfused else 'fused'))
-        if unfused:
-            vlen_ic, vlen_oc = -1, -1
-            for e in config_dict['entity']:
-                if e[0] == 'tile_ic':
-                    vlen_ic = e[2][-1]
-                if e[0] == 'tile_oc':
-                    vlen_oc = e[2][-1]
-            assert vlen_ic != -1 and vlen_oc != -1
-            with open('generated_kernels/cpu/unfused/kernel_launch_config/{}_config.csv'.format(workload_name), 'w') as f:
-                f.write('{},{}'.format(vlen_ic, vlen_oc))
-        else:
-            vlens = get_CPU_vlen_from_config(best_config, 'all')
-            vlens = [str(v) for v in vlens]
-            with open('generated_kernels/cpu/fused/kernel_launch_config/{}_config.csv'.format(workload_name), 'w') as f:
-                f.write(','.join(vlens))
-
-
 def get_CPU_vlen_from_config(best_config=None, cfg_key=''):
     from tvm.autotvm.task.space import FallbackConfigEntity
     if best_config is None or isinstance(best_config, FallbackConfigEntity):

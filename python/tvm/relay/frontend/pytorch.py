@@ -1343,6 +1343,29 @@ class PyTorchOpConverter:
             count_include_pad=count_include_pad,
         )
 
+    def linear(self, inputs, input_types):
+        # https://pytorch.org/docs/stable/nn.functional.html#linear
+        # 0 - input
+        # 1 - weight
+        bias = inputs[2]
+        a_shape = self.infer_shape_with_prelude(inputs[0])
+        b_shape = self.infer_shape_with_prelude(inputs[1])
+        if len(a_shape) == 2 and len(b_shape) == 2:
+            mm_out = _op.nn.dense(inputs[0], inputs[1])
+        elif len(b_shape) == 1:
+            mm_out = self.matmul([inputs[0], inputs[1]], input_types[:2])
+        else:
+            mm_out = self.matmul(
+                [inputs[0], _op.transpose(inputs[1], axes=(1, 0))], input_types[:2]
+            )
+        if isinstance(bias, _expr.Expr):
+            bias_ndims = len(self.infer_shape_with_prelude(bias))
+            if bias_ndims == 1:
+                return _op.nn.bias_add(mm_out, bias, axis=-1)
+            mm_dtype = self.infer_type_with_prelude(mm_out).dtype
+            return self.add([mm_out, bias], [mm_dtype, input_types[2]])
+        return mm_out
+
     def dropout(self, inputs, input_types):
         data = inputs[0]
         rate = float(inputs[1])
@@ -2156,6 +2179,7 @@ class PyTorchOpConverter:
             "aten::softplus": self.softplus,
             "aten::avg_pool2d": self.avg_pool2d,
             "aten::avg_pool3d": self.avg_pool3d,
+            "aten::linear": self.linear,
             "aten::dropout": self.dropout,
             "aten::dropout_": self.dropout,
             "aten::feature_dropout": self.dropout,
